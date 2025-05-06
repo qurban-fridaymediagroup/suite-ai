@@ -1,0 +1,309 @@
+import streamlit as st
+from openai import OpenAI
+import os
+import re  
+from dotenv import load_dotenv
+from dictionary import normalisation_dict, formula_mapping
+from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
+from rapidfuzz import process, fuzz
+
+# Load environment variables
+load_dotenv()
+
+# Init OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def normalize_prompt(text, threshold=85):
+    """
+    Normalize user prompts by expanding abbreviations and standardizing business terms.
+
+    This function:
+    1. Expands common abbreviations (acc -> account, loc -> location)
+    2. Normalizes business terms to their standard form using the normalization dictionary
+    3. Uses fuzzy matching for misspelled terms
+    4. Preserves common words, numbers, and other non-business terms
+    """
+    text = text.lower().strip()
+
+    # Common abbreviations mapping - expand short forms to their full forms
+    abbrev_mapping = {
+        'acc': 'account',
+        'acct': 'account',
+        'accnt': 'account',
+        'locati': 'location',
+        'loc': 'location',
+        'subs': 'subsidiary',
+        'sub': 'subsidiary',
+        'dept': 'department',
+        'dep': 'department',
+        'cat': 'budget category',
+        'cls': 'classification',
+        'class': 'classification',
+        'cust': 'customer number',
+        'vend': 'vendor name',
+        'vendor': 'vendor name'
+    }
+
+    # First, expand abbreviations
+    words = text.split()
+    for i in range(len(words)):
+        if words[i] in abbrev_mapping:
+            words[i] = abbrev_mapping[words[i]]
+
+    # Reconstruct the text with expanded abbreviations
+    expanded_text = ' '.join(words)
+
+    # Now process the text for normalization
+    words = expanded_text.split()
+    dictionary_keys = list(normalisation_dict.keys())
+    result = []
+
+    # Process words one by one
+    i = 0
+    while i < len(words):
+        # Check for multi-word keys (like "budget category", "account number")
+        found_multi_word = False
+        for j in range(min(3, len(words) - i), 1, -1):  # Try phrases up to 3 words long
+            phrase = ' '.join(words[i:i+j])
+            if phrase in normalisation_dict:
+                result.append(normalisation_dict[phrase])
+                i += j
+                found_multi_word = True
+                break
+
+        if found_multi_word:
+            continue
+
+        # If no multi-word match, try single word
+        word = words[i]
+        if word in normalisation_dict:
+            result.append(normalisation_dict[word])
+        else:
+            # Only apply fuzzy matching to potential business terms
+            # Skip common words, numbers, months, etc.
+            common_words = {'get', 'show', 'me', 'need', 'for', 'in', 'and', 'the', 'of', 'to', 'from',
+                           'report', 'data', 'info', 'details', 'forecast', 'standard', 'office', 'supplies'}
+            months = {'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+                     'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september',
+                     'october', 'november', 'december'}
+
+            if (word in common_words or word in months or word.isdigit() or
+                len(word) <= 2 or any(c.isdigit() for c in word)):
+                result.append(word)
+            else:
+                # Try fuzzy matching for potential business terms
+                match, score, _ = process.extractOne(word, dictionary_keys, scorer=fuzz.WRatio)
+                if score >= threshold:
+                    result.append(normalisation_dict[match])
+                else:
+                    result.append(word)
+        i += 1
+
+    return ' '.join(result)
+
+
+def parse_formula_to_intent(formula_str: str):
+    match = re.match(r"(\w+)\((.*)\)", formula_str)
+    if not match:
+        raise ValueError("Invalid formula format.")
+
+    formula_type = match.group(1).upper()  # ✅ Convert formula name to UPPERCASE here
+    raw_params = match.group(2)
+    params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}]*\})', raw_params)]
+
+    if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
+        raise ValueError("Mismatch in formula parameters.")
+
+    return {
+        "formula_type": formula_type,
+        "intent": dict(zip(formula_mapping[formula_type], params))
+    }
+
+
+def format_all_formula_mappings(mapping: dict) -> str:
+    return "\n".join(
+        [f"{name}({', '.join(params)})" for name, params in mapping.items()]
+    )
+
+
+def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
+    """
+    Generate NetSuite formula using the validated intent, maintaining the order and formula type.
+    """
+    if formula_type not in formula_mapping:
+        raise ValueError(f"Unknown formula type: {formula_type}")
+
+    ordered_fields = formula_mapping[formula_type]
+    ordered_values = []
+
+    for field in ordered_fields:
+        value = intent.get(field, "")
+
+        # Check if the value already has quotes
+        has_quotes = re.search(r'^".*"$', str(value))
+
+        # Check if the value is a placeholder (contains square or curly brackets)
+        is_placeholder = re.search(r'[\[\]{}]', str(value))
+
+        if has_quotes:
+            # Already quoted, use as is
+            ordered_values.append(value)
+        elif is_placeholder:
+            # It's a placeholder, preserve its format but ensure it's quoted
+            # Remove any existing quotes first to avoid double quotes
+            clean_value = re.sub(r'^"|"$', '', str(value))
+            ordered_values.append(f'"{clean_value}"')
+        else:
+            # Regular value, just quote it
+            ordered_values.append(f'"{value}"')
+
+    return f'{formula_type}({",".join(ordered_values)})'
+
+
+# Initialize session state for model ID and system prompt
+if 'fine_tuned_model' not in st.session_state:
+    st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BRICgOMR"
+if 'system_prompt' not in st.session_state:
+    st.session_state.system_prompt = """
+        You are SuiteAI.
+
+        Instructions:
+        - Return exactly one valid SuiteReport formula if the user's request matches a formula.
+        - Supported formulas (strictly with required argument structure only):
+        - SUITEGEN({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+        - SUITEGENREP({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+        - SUITECUS({Subsidiary}, [Customer], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
+        - SUITEVEN({Subsidiary}, [Vendor], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
+        - SUITEBUD({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+        - SUITEBUDREP({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+        - SUITEVAR({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+        - SUITEREC({EntityType})
+
+        Formula Purposes:
+        - SUITEGEN → Fetch general ledger/account aggregated totals, spend, and balances.
+        - SUITEGENREP → Fetch detailed transaction lists or summary reports for general ledger/accounts.
+        - SUITECUS → Fetch customer transactions or customer invoices.
+        - SUITEVEN → Fetch vendor transactions or vendor invoices.
+        - SUITEBUD → Fetch budgeted account totals, spend, and balances (month-wise).
+        - SUITEBUDREP → Fetch detailed or summary reports for budgeted accounts.
+        - SUITEVAR → Perform actual vs budget variance analysis.
+        - SUITEREC → SUITEREC → Fetch master lists of entity records such as customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories.
+
+        - Strictly follow the required argument sequence and argument count for each formula. Do not add or remove arguments.
+        - Use {} for dynamic single values, [] for dynamic multiple selections, and "" for fixed literal values.
+        - If a field is optional and not provided, leave a placeholder.
+        - If the prompt cannot map to a valid formula, politely guide the user without inventing a formula.
+        - If returning a formula, output only the formula — do not include any explanation, summary, or extra text.
+    """
+
+# Initialize session state for chat history
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# Streamlit UI
+st.title("Netsuite Formula Generator Chat")
+
+# Settings section with expander
+with st.expander("Settings"):
+    # Model ID input
+    new_model = st.text_input("Fine-tuned Model ID", value=st.session_state.fine_tuned_model)
+    if new_model != st.session_state.fine_tuned_model:
+        st.session_state.fine_tuned_model = new_model
+        st.success("Model ID updated!")
+
+    # System prompt input
+    new_prompt = st.text_area("System Prompt", value=st.session_state.system_prompt, height=300)
+    if new_prompt != st.session_state.system_prompt:
+        st.session_state.system_prompt = new_prompt
+        st.success("System prompt updated!")
+
+# Display chat messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+        if message["role"] == "assistant" and "formula" in message:
+            st.code(message["formula"], language="text")
+
+# Chat input
+query = st.chat_input("Ask about Netsuite formulas...")
+
+if query:
+    # Normalize the query before processing
+    normalized_query = normalize_prompt(query)
+
+    # Add user message to chat
+    st.session_state.messages.append({"role": "user", "content": query})
+    with st.chat_message("user"):
+        st.write(query)
+
+    # Get AI response
+    try:
+        response = client.chat.completions.create(
+            model=st.session_state.fine_tuned_model,
+            messages=[
+                {"role": "system", "content": st.session_state.system_prompt},
+                {"role": "user", "content": normalized_query}
+            ],
+            temperature=0.7,
+        )
+
+        content = response.choices[0].message.content
+        # Check if content exists before calling strip()
+        
+        formula = content.strip() if content else ""
+        parsed = parse_formula_to_intent(formula)
+        validated = validate_intent_fields_v2(parsed["intent"])
+        regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
+
+        
+
+        if content:
+            # Add assistant message to chat
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "Here's the formula you requested:",
+                "formula": formula,
+                "intent_map": parsed,
+                "validated_result": validated,
+                "regenerated_formula": regenerated_formula
+            })
+            with st.chat_message("assistant"):
+                # Display normalized query
+                st.markdown("**Normalized Query:**")
+                st.code(normalized_query, language="text")
+                
+                st.markdown("---")
+                
+                # Display GPT Response
+                st.markdown("**GPT Response:**")
+                st.code(formula, language="text")
+                
+                st.markdown("---")
+                
+                # Display Validation Results
+                st.markdown("**Validation Results:**")
+                st.code(validated, language="text")
+                
+                # Display Regenerated Formula
+                st.markdown("**Final Formula:**")
+                st.code(regenerated_formula, language="text")
+        else:
+            st.error("No response generated")
+    except Exception as e:
+        st.error(f"Error generating response: {str(e)}")
+
+# Add copy chat history button
+if st.session_state.messages:
+    if st.button("Copy Chat History"):
+        chat_history = "\n\n".join(
+            f"{msg['role'].upper()}: {msg['content']}\n{msg.get('formula', '')}" 
+            for msg in st.session_state.messages
+        )
+        st.toast("Chat history copied to clipboard!")
+        st.code(chat_history, language="text")
+
+# Add clear chat button
+if st.session_state.messages:
+    if st.button("Clear Chat"):
+        st.session_state.messages = []
+        st.experimental_rerun()

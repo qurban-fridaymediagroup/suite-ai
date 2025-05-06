@@ -1,0 +1,13 @@
+venv
+.env
+.idea
+__pycache__
+.DS_Store
+*.pyc
+*.pyo
+*.exe
+*.whl
+*.egg-info
+*.iml
+*.ipynb_checkpoints
+*.pytest_cache
