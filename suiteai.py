@@ -160,11 +160,14 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
     return f'{formula_type}({",".join(ordered_values)})'
 
 
-# Initialize session state for model ID and system prompt
+# Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
     st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BRICgOMR"
+if 'gpt_key' not in st.session_state:
+    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY")
 if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = """
+
         You are SuiteAI.
 
         Instructions:
@@ -216,6 +219,12 @@ with st.expander("Settings"):
     if new_prompt != st.session_state.system_prompt:
         st.session_state.system_prompt = new_prompt
         st.success("System prompt updated!")
+
+    # GPT key input
+    new_key = st.text_input("GPT Key", value=st.session_state.gpt_key, type="password")
+    if new_key != st.session_state.gpt_key:
+        st.session_state.gpt_key = new_key
+        st.success("GPT key updated!")
 
 # Display chat messages
 for message in st.session_state.messages:
