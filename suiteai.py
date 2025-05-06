@@ -3,15 +3,14 @@ from openai import OpenAI
 import os
 import re  
 from dotenv import load_dotenv
-from dictionary import normalisation_dict, formula_mapping
+from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
 from rapidfuzz import process, fuzz
 
 # Load environment variables
 load_dotenv()
 
-# Init OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI client will be initialized after API key validation
 
 def normalize_prompt(text, threshold=85):
     """
@@ -164,7 +163,9 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 if 'fine_tuned_model' not in st.session_state:
     st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BRICgOMR"
 if 'gpt_key' not in st.session_state:
-    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY")
+    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY", "")
+if 'has_valid_api_key' not in st.session_state:
+    st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = """
 
@@ -206,6 +207,19 @@ if 'messages' not in st.session_state:
 # Streamlit UI
 st.title("Netsuite Formula Generator Chat")
 
+# API Key Check - Display prominent message if API key is missing
+if not st.session_state.has_valid_api_key:
+    st.warning("⚠️ **OpenAI API Key Required**: Please enter your OpenAI API key to use this application.", icon="⚠️")
+
+    # API Key input outside of expander for visibility
+    new_key = st.text_input("OpenAI API Key", value="", type="password", 
+                           help="Enter your OpenAI API key. This is required to use the application.")
+    if new_key:
+        st.session_state.gpt_key = new_key
+        st.session_state.has_valid_api_key = True
+        st.success("API key added successfully! You can now use the application.")
+        st.rerun()
+
 # Settings section with expander
 with st.expander("Settings"):
     # Model ID input
@@ -220,23 +234,36 @@ with st.expander("Settings"):
         st.session_state.system_prompt = new_prompt
         st.success("System prompt updated!")
 
-    # GPT key input
-    new_key = st.text_input("GPT Key", value=st.session_state.gpt_key, type="password")
+    # GPT key input (also in settings)
+    new_key = st.text_input("OpenAI API Key", value=st.session_state.gpt_key, type="password")
     if new_key != st.session_state.gpt_key:
         st.session_state.gpt_key = new_key
-        st.success("GPT key updated!")
+        st.session_state.has_valid_api_key = bool(new_key)
+        st.success("API key updated!")
 
 # Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
-        if message["role"] == "assistant" and "formula" in message:
-            st.code(message["formula"], language="text")
+        if message["role"] == "assistant":
+            if "normalized_query" in message:
+                st.markdown("**Normalized Query:**")
+                st.code(message["normalized_query"], language="text")
+            if "formula" in message:
+                st.markdown("**GPT Response:**")
+                st.code(message["formula"], language="text")
+            if "validated" in message:
+                st.markdown("**Validation Results:**")
+                st.code(message["validated"], language="text")
+            if "regenerated_formula" in message:
+                st.markdown("**Final Formula:**")
+                st.code(message["regenerated_formula"], language="text")
+    st.divider()
 
-# Chat input
-query = st.chat_input("Ask about Netsuite formulas...")
+# Chat input - disabled if no valid API key
+query = st.chat_input("Ask about Netsuite formulas...", disabled=not st.session_state.has_valid_api_key)
 
-if query:
+if query and st.session_state.has_valid_api_key:
     # Normalize the query before processing
     normalized_query = normalize_prompt(query)
 
@@ -247,6 +274,9 @@ if query:
 
     # Get AI response
     try:
+        # Initialize OpenAI client with the current API key
+        client = OpenAI(api_key=st.session_state.gpt_key)
+
         response = client.chat.completions.create(
             model=st.session_state.fine_tuned_model,
             messages=[
@@ -258,13 +288,13 @@ if query:
 
         content = response.choices[0].message.content
         # Check if content exists before calling strip()
-        
+
         formula = content.strip() if content else ""
         parsed = parse_formula_to_intent(formula)
         validated = validate_intent_fields_v2(parsed["intent"])
         regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
 
-        
+
 
         if content:
             # Add assistant message to chat
@@ -272,27 +302,24 @@ if query:
                 "role": "assistant",
                 "content": "Here's the formula you requested:",
                 "formula": formula,
+                "normalized_query": normalized_query,
                 "intent_map": parsed,
-                "validated_result": validated,
+                "validated": validated,
                 "regenerated_formula": regenerated_formula
             })
             with st.chat_message("assistant"):
                 # Display normalized query
                 st.markdown("**Normalized Query:**")
                 st.code(normalized_query, language="text")
-                
-                st.markdown("---")
-                
+
                 # Display GPT Response
                 st.markdown("**GPT Response:**")
                 st.code(formula, language="text")
-                
-                st.markdown("---")
-                
+
                 # Display Validation Results
                 st.markdown("**Validation Results:**")
                 st.code(validated, language="text")
-                
+
                 # Display Regenerated Formula
                 st.markdown("**Final Formula:**")
                 st.code(regenerated_formula, language="text")
@@ -305,7 +332,7 @@ if query:
 if st.session_state.messages:
     if st.button("Copy Chat History"):
         chat_history = "\n\n".join(
-            f"{msg['role'].upper()}: {msg['content']}\n{msg.get('formula', '')}" 
+            f"{msg['role'].upper()}: {msg['content']}\nNormalized Query: {msg.get('normalized_query', '')}\nGPT Response: {msg.get('formula', '')}\nValidation Results: {msg.get('validated', '')}\nFinal Formula: {msg.get('regenerated_formula', '')}"
             for msg in st.session_state.messages
         )
         st.toast("Chat history copied to clipboard!")
@@ -315,4 +342,4 @@ if st.session_state.messages:
 if st.session_state.messages:
     if st.button("Clear Chat"):
         st.session_state.messages = []
-        st.experimental_rerun()
+        st.rerun()
