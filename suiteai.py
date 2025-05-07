@@ -151,7 +151,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
         if field == "Subsidiary":
             raw_val = value.strip()
             if raw_val in ("{Subsidiary}", "[Subsidiary]", "") or not raw_val:
-                ordered_values.append('{"Friday Media Group (Consolidated)"}')
+                ordered_values.append('"Friday Media Group (Consolidated)"')
                 continue
         
         # Check if field is an Account or Vendor field that should use * when empty or generic
@@ -165,8 +165,8 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
         # Handle Budget category default
         if field == "Budget category":
             raw_val = value.strip()
-            if raw_val in ("{Subsidiary}", "[Subsidiary]", "") or not raw_val:
-                ordered_values.append('{"Friday Media Group (Consolidated)"}')
+            if raw_val in ("{Budget category}", "[Budget category]", "") or not raw_val:
+                ordered_values.append('"Standard Budget"')
                 continue
         
         # Check if it's an empty placeholder or empty string for other fields
@@ -182,17 +182,17 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             if content_match:
                 content = content_match.group(1).strip()
                 if content:
-                    value = f'{{{content}}}'
+                    value = content  # Just use the content without any brackets
                 else:
                     value = ""
 
+        # Remove any extra brackets and quotes to clean the value
         clean_val = re.sub(r'[{}\"\'\[\]]', '', str(value)).strip()
         
-        if field in ["From Period", "To Period", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
-            ordered_values.append(f'"{clean_val}"')
-        else:
-            ordered_values.append(f'{{"{clean_val}"}}')
+        # Format all fields with quotes only, no curly brackets
+        ordered_values.append(f'"{clean_val}"')
 
+    # Join with commas, preserving empty values
     formula_params = ", ".join(ordered_values)
     return f'{formula_type}({formula_params})'
 
