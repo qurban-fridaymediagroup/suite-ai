@@ -102,7 +102,7 @@ def normalize_prompt(text, threshold=85):
 
 
 def parse_formula_to_intent(formula_str: str):
-    match = re.match(r"(\w+)\((.*)\)", formula_str)
+    match = re.match(r'(\w+)\((.*)\)', formula_str)
     if not match:
         raise ValueError("Invalid formula format.")
 
@@ -128,6 +128,8 @@ def format_all_formula_mappings(mapping: dict) -> str:
 def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
     """
     Generate NetSuite formula using the validated intent, maintaining the order and formula type.
+    Handles correct formatting for each parameter type (quoted, braced, or both).
+    If value is empty or a placeholder, replace with * for specific fields or keep as comma for others.
     """
     if formula_type not in formula_mapping:
         raise ValueError(f"Unknown formula type: {formula_type}")
@@ -135,39 +137,173 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
     ordered_fields = formula_mapping[formula_type]
     ordered_values = []
 
+    # Define placeholder patterns to detect
+    placeholder_patterns = [
+        r'\[.*?\]', r'\{.*?\}', r'^\{\'.*?\'\}$'
+    ]
+    
+    # Fields that should use * when empty
+    asterisk_fields = ["Account Name", "Account Number", "Vendor Name", "Vendor Number"]
+
     for field in ordered_fields:
-        value = intent.get(field, "")
-
-        # Check if the value already has quotes
-        has_quotes = re.search(r'^".*"$', str(value))
-
-        # Check if the value is a placeholder (contains square or curly brackets)
-        is_placeholder = re.search(r'[\[\]{}]', str(value))
-
-        if has_quotes:
-            # Already quoted, use as is
-            ordered_values.append(value)
-        elif is_placeholder:
-            # It's a placeholder, preserve its format but ensure it's quoted
-            # Remove any existing quotes first to avoid double quotes
-            clean_value = re.sub(r'^"|"$', '', str(value))
-            ordered_values.append(f'"{clean_value}"')
+        value = intent.get(field, "").strip()
+        
+        # Handle specific default fields first
+        if field == "Subsidiary":
+            raw_val = value.strip()
+            if raw_val in ("{Subsidiary}", "[Subsidiary]", "") or not raw_val:
+                ordered_values.append('{"Friday Media Group (Consolidated)"}')
+                continue
+        
+        elif field == "Account Number":
+            raw_val = value.strip()
+            if raw_val in ("{Account Number}", "[Account Number]", "") or not raw_val:
+                ordered_values.append('"*"')
+            else:
+                ordered_values.append(f'"{raw_val}"')
+            continue
+        
+        # Handle other fields
+        # (Handle other fields like "Customer", "Budget category", etc. as shown in the original code)
+        
+        is_empty_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
+        
+        if is_empty_placeholder or not value:
+            if field in asterisk_fields:
+                ordered_values.append("'*'")  # Changed from '"*"' to "'*'"
+            else:
+                ordered_values.append("")
+            continue
+            
+        # Convert any square brackets to curly brackets but preserve the content
+        if isinstance(value, str) and ('[' in value or ']' in value):
+            content_match = re.search(r'\[(.*?)\]', value)
+            if content_match:
+                content = content_match.group(1).strip()
+                if content:
+                    value = f'{{{content}}}'
+                else:
+                    value = ""
+        
+        clean_val = re.sub(r'[{}\"\'\[\]]', '', str(value)).strip()
+        
+        if field in ["From Period", "To Period", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
+            ordered_values.append(f'"{clean_val}"')
         else:
-            # Regular value, just quote it
-            ordered_values.append(f'"{value}"')
+            ordered_values.append(f'{{"{clean_val}"}}')
 
-    return f'{formula_type}({",".join(ordered_values)})'
+    formula_params = ", ".join(ordered_values)
+    return f'{formula_type}({formula_params})'
+    """
+    Generate NetSuite formula using the validated intent, maintaining the order and formula type.
+    Handles correct formatting for each parameter type (quoted, braced, or both).
+    If value is empty or a placeholder, replace with * for specific fields or keep as comma for others.
+    """
+    if formula_type not in formula_mapping:
+        raise ValueError(f"Unknown formula type: {formula_type}")
+
+    ordered_fields = formula_mapping[formula_type]
+    ordered_values = []
+
+    # Define placeholder patterns to detect
+    placeholder_patterns = [
+        r'\[.*?\]', r'\{.*?\}', r'^\{\'.*?\'\}$'
+    ]
+    
+    # Fields that should use * when empty
+    asterisk_fields = ["Account Name", "Account Number", "Vendor Name", "Vendor Number"]
+
+    for field in ordered_fields:
+        value = intent.get(field, "").strip()
+        
+        # Handle specific default fields first
+        if field == "Subsidiary":
+            raw_val = value.strip()
+            # If it's exactly the generic placeholder, or empty after cleanup
+            if raw_val in ("{Subsidiary}", "[Subsidiary]", "") or not raw_val:
+                ordered_values.append('{"Friday Media Group (Consolidated)"}')
+                continue
+        
+            if field == 'TABLE_NAME' and value.strip() == '{"Subsidiary"}':
+                raw_val = value.strip()
+                # If it's exactly the generic placeholder, or empty after cleanup
+                if raw_val in ('{"Subsidiary"}', "", "{Subsidiary}", "[Subsidiary]") or not raw_val:
+                    # Replace the placeholder with the consolidated value
+                    ordered_values.append('{"Friday Media Group (Consolidated)"}')
+                    continue
+        elif field == "Customer":
+            raw_val = value.strip()
+            # If it's exactly the generic placeholder, or empty after cleanup
+            if raw_val in ("{Customer}", "[Customer]", "") or not raw_val:
+                ordered_values.append('"*"')
+                continue
+
+        elif field == "Account":
+            raw_val = value.strip()
+            # If it's exactly the generic placeholder, or empty after cleanup
+            if raw_val in ("{Account}", "[Account]", "") or not raw_val:
+                ordered_values.append('"*"')
+                continue
+
+        elif field == "Budget category":
+            raw_val = value.strip()
+            # If it's exactly the generic placeholder, or empty after cleanup
+            if raw_val in ("{Budget category}", "[Budget category]", "") or not raw_val:
+                ordered_values.append('"Standard Budget"')
+                continue
+        
+        # Check if value is an empty placeholder (no content inside brackets)
+        is_empty_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
+        
+        # If it's an empty placeholder or empty string
+        if is_empty_placeholder or not value:
+            # For specific fields, use * instead of empty string
+            if field in asterisk_fields:
+                ordered_values.append("'*'")  # Changed from '"*"' to "'*'"
+            else:
+                # For other fields, just use empty string (will become a comma)
+                ordered_values.append("")
+            continue
+            
+        # Convert any square brackets to curly brackets but preserve the content
+        if isinstance(value, str) and ('[' in value or ']' in value):
+            # Extract content from within brackets
+            content_match = re.search(r'\[(.*?)\]', value)
+            if content_match:
+                content = content_match.group(1).strip()
+                if content:  # If there's actual content
+                    value = f'{{{content}}}'
+                else:  # Empty brackets
+                    value = ""
+        
+        # Remove any extra brackets and quotes to clean the value
+        clean_val = re.sub(r'[{}\"\'\[\]]', '', str(value)).strip()
+        
+        # Format based on field type
+        if field in ["From Period", "To Period", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
+            # These fields should be quoted but not in braces
+            ordered_values.append(f'"{clean_val}"')
+        else:
+            # All other fields should be in braces
+            ordered_values.append(f'{{"{clean_val}"}}')
+
+    # Join with commas, preserving empty values
+    formula_params = ", ".join(ordered_values)
+    return f'{formula_type}({formula_params})'
 
 
 # Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
-    st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BRICgOMR"
+    st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BU8GWu9n"
 if 'gpt_key' not in st.session_state:
-    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY", "")
+    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY", "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")
 if 'has_valid_api_key' not in st.session_state:
     st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
-    st.session_state.system_prompt = """
+    st.session_state.system_prompt = """...
+
+# Initialization and Streamlit components continue...
+
 
         You are SuiteAI.
 
