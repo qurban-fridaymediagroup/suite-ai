@@ -203,7 +203,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 if 'fine_tuned_model' not in st.session_state:
     st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BU8GWu9n"
 if 'gpt_key' not in st.session_state:
-    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY", "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")
+    st.session_state.gpt_key = os.getenv("OPENAI_API_KEY", "")
 if 'has_valid_api_key' not in st.session_state:
     st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
