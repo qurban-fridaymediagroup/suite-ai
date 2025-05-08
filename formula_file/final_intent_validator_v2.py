@@ -260,13 +260,24 @@ def validate_gpt_formula_output(gpt_formula: str) -> dict:
             in_quotes = not in_quotes
             current_param += char
         elif char == ',' and not in_braces and not in_quotes and not in_brackets:
-            params.append(current_param.strip())
+            # Clean parameter value before adding
+            clean_param = current_param.strip()
+            if clean_param.startswith('[') and clean_param.endswith(']'):
+                clean_param = clean_param[1:-1]
+            elif clean_param.startswith('{') and clean_param.endswith('}'):
+                clean_param = clean_param[1:-1]
+            params.append(clean_param)
             current_param = ""
         else:
             current_param += char
     
     if current_param:
-        params.append(current_param.strip())
+        clean_param = current_param.strip()
+        if clean_param.startswith('[') and clean_param.endswith(']'):
+            clean_param = clean_param[1:-1]
+        elif clean_param.startswith('{') and clean_param.endswith('}'):
+            clean_param = clean_param[1:-1]
+        params.append(clean_param)
     
     # Create a dictionary from the parameters
     intent_dict = {}
@@ -277,8 +288,12 @@ def validate_gpt_formula_output(gpt_formula: str) -> dict:
     # Map parameters to fields based on their position in the template
     for i, field in enumerate(template):
         if i < len(params):
-            # Preserve the original parameter format
-            intent_dict[field] = params[i]
+            # Clean and format the parameter value
+            value = params[i].strip('"\'')
+            if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
+                intent_dict[field] = value
+            else:
+                intent_dict[field] = f'"{value}"'
     
     return intent_dict
 
@@ -324,35 +339,36 @@ def format_final_formula(validation_result):
     formula_type = validation_result.get("formula_type")
     validated_intent = validation_result.get("validated_intent", {})
     original_intent = validation_result.get("original_intent", {})
-    
+
     # Get the template for this formula type
     template = formula_mapping.get(formula_type, [])
-    
+
     # Build parameters list
     params = []
     for field in template:
-        # Check if the field exists in the original intent (to preserve format)
-        if field in original_intent and isinstance(original_intent[field], str) and (
-            original_intent[field].startswith('[') or original_intent[field].startswith('{')):
-            # Preserve the original format for placeholders
-            params.append(original_intent[field])
+        # Use original intent if present and is a string
+        if field in original_intent and isinstance(original_intent[field], str):
+            value = original_intent[field]
         else:
-            # Use the validated value
             value = validated_intent.get(field, "")
-            
-            # Format based on field type
-            if field in ["Subsidiary"]:
-                params.append(f'{{"{value}"}}')
-            elif field in ["From Period", "To Period"]:
-                params.append(f'"{value}"')
-            elif field in ["Account Number", "Account Name", "Classification", "Department", "Location"]:
-                if value:
-                    params.append(f'{{"{value}"}}')
-                else:
-                    params.append("")
-            else:
-                params.append(f'"{value}"')
-    
+
+        # Special handling for Subsidiary
+        if field == "Subsidiary":
+            params.append('"Friday Media Group (Consolidated)"')
+            continue
+
+        # Step 1: Convert square brackets to curly
+        value = value.replace('[', '{').replace(']', '}')
+        # Step 2: Remove all curly brackets
+        value = value.replace('{', '').replace('}', '')
+        
+        # Handle empty values - leave them as empty strings to create commas
+        if not value.strip():
+            params.append("")  # Empty string creates a comma with nothing between
+        else:
+            # Add quotes around non-empty values
+            params.append(f'"{value}"')
+
     # Join parameters and return the formatted formula
     return f'{formula_type}({", ".join(params)})'
 
@@ -481,7 +497,7 @@ def validate_intent_fields_v2(intent_dict):
                 validated[key] = clean_val
                 notes[key] = "Valid integer"
             elif "limit" in clean_val:
-                validated[key] = value
+                validated[key] = clean_val
                 notes[key] = "Placeholder preserved"
             else:
                 validated[key] = "10"
