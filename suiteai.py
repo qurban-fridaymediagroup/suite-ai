@@ -1,7 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import os
-import re  
+import re
 from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
@@ -10,12 +10,16 @@ from rapidfuzz import process, fuzz
 # Load environment variables
 load_dotenv()
 
-# OpenAI client will be initialized after API key validation
+# Get API key and model from environment variables
+api_key = os.getenv("OPENAI_API_KEY")
+model = os.getenv("OPENAI_MODEL")  
+
+# Initialize OpenAI client with API key from environment
+client = OpenAI(api_key=api_key)
 
 def normalize_prompt(text, threshold=85):
     """
     Normalize user prompts by expanding abbreviations and standardizing business terms.
-
     This function:
     1. Expands common abbreviations (acc -> account, loc -> location)
     2. Normalizes business terms to their standard form using the normalization dictionary
@@ -100,24 +104,22 @@ def normalize_prompt(text, threshold=85):
 
     return ' '.join(result)
 
-
 def parse_formula_to_intent(formula_str: str):
     match = re.match(r'(\w+)\((.*)\)', formula_str)
     if not match:
-        raise ValueError("Invalid formula format.")
+        return {"error": "Invalid formula format."}
 
     formula_type = match.group(1).upper()  # ✅ Convert formula name to UPPERCASE here
     raw_params = match.group(2)
     params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}]*\})', raw_params)]
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
-        raise ValueError("Mismatch in formula parameters.")
+        return {"error": "Mismatch in formula parameters.", "formula": formula_str}
 
     return {
         "formula_type": formula_type,
         "intent": dict(zip(formula_mapping[formula_type], params))
     }
-
 
 def format_all_formula_mappings(mapping: dict) -> str:
     return "\n".join(
@@ -127,77 +129,156 @@ def format_all_formula_mappings(mapping: dict) -> str:
 def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
     """
     Generate NetSuite formula using the validated intent, maintaining the order and formula type.
-    Handles correct formatting for each parameter type (quoted, braced, or both).
-    If value is empty or a placeholder, replace with * for specific fields or keep as comma for others.
+    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name,
+    Vendor Number, Customer Name, Customer Number; otherwise, outputs a comma.
+    Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
+    Uses 'Current month' for From Period and To Period if not mentioned.
     """
     if formula_type not in formula_mapping:
         raise ValueError(f"Unknown formula type: {formula_type}")
 
     ordered_fields = formula_mapping[formula_type]
-    ordered_values = []
 
-    # Define placeholder patterns to detect
-    placeholder_patterns = [
-        r'\[.*?\]', r'\{.*?\}', r'^\{\'.*?\'\}$'
-    ]
+    # Build the formula string
+    formula_str = formula_type + "("
 
-    # Fields that should use * when empty or containing generic placeholders
-    asterisk_fields = ["Account Name", "Account Number", "Account", "Vendor Name", "Vendor Number", "Vendor"]
-
-    for field in ordered_fields:
+    for i, field in enumerate(ordered_fields):
         value = intent.get(field, "").strip()
-        
-        # Handle specific default fields first
+
+        # Define all fields to check for placeholders
+        all_fields = [
+            "Subsidiary", "Account Number", "Account Name", "Classification",
+            "Department", "Location", "Customer Number", "Customer Name",
+            "Vendor Name", "Vendor Number", "Class", "high/low", "Limit of Records",
+            "Budget category", "From Period", "To Period", "TABLE_NAME",
+            "Grouping and Filtering"
+        ]
+
+        # Placeholder formats from field_format_map
+        placeholder_formats = {
+            "Subsidiary": "Subsidiary",
+            "Budget category": '"Budget category"',
+            "Account Number": '{"Account Number"}',
+            "Account Name": '{"Account Name"}',
+            "From Period": '"From Period"',
+            "To Period": '"To Period"',
+            "Classification": '{"Classification"}',
+            "Department": '{"Department"}',
+            "Location": '{"Location"}',
+            "Customer Number": '{"Customer Number"}',
+            "Customer Name": '{"Customer Name"}',
+            "Vendor Name": '{"Vendor Name"}',
+            "Vendor Number": '{"Vendor Number"}',
+            "Class": '{"Class"}',
+            "high/low": '"high/low"',
+            "Limit of Records": '"Limit of record"',
+            "TABLE_NAME": '"TABLE_NAME"'
+        }
+
+        # Fields that should output '*' when placeholder or missing
+        asterisk_fields = [
+            "Account Name", "Account Number", "Vendor Name", "Vendor Number",
+            "Customer Name", "Customer Number"
+        ]
+
+        # Normalize field variations for placeholder detection
+        field_variations = [
+            field.lower(),
+            field.replace(' ', '_').lower(),
+            field.replace('/', '_').lower(),
+            field.lower().replace('limit of records', 'limit of record'),
+            field.lower().replace('high/low', 'high_low'),
+            field.lower().replace('grouping and filtering', 'grouping_and_filtering')
+        ]
+
+        # Additional values to treat as placeholders
+        invalid_values = [
+            'vendor_name', 'high_low', 'high/low', 'limit of record', 'limit_of_record',
+            'high', 'low', 'account_number', 'account_name', 'customer_number',
+            'customer_name', 'vendor_number', 'budget_category', 'classification',
+            'department', 'location', 'subsidiary', 'class', 'limit of records',
+            'from period', 'to period', 'from_period', 'to_period', 'vendor name',
+            'customer number', 'customer name', 'vendor number', 'account number',
+            'account name', 'budget category', 'table_name', 'grouping and filtering',
+            'grouping_and_filtering', '', 'none', 'null', 'placeholder'
+        ]
+
+        # Check if the value is a placeholder, empty, or invalid
+        clean_value = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
+        is_placeholder = (
+            value == placeholder_formats.get(field, '') or
+            bool(re.match(r'^{' + re.escape(field) + r'}$|^{' + re.escape(field.lower()) + r'}$', value)) or
+            bool(re.match(r'^\[' + re.escape(field) + r'\]$|^\[' + re.escape(field.lower()) + r'\]$', value)) or
+            bool(re.match(r'^{"' + re.escape(field) + r'"}$|^{"' + re.escape(field.lower()) + r'"}$', value)) or
+            not value or
+            clean_value in field_variations or
+            clean_value in [v.lower() for v in all_fields] or
+            clean_value in invalid_values or
+            clean_value == field.lower() or
+            value in [f'"{v}"' for v in invalid_values] or
+            value in [f'"{v}"' for v in field_variations] or
+            clean_value in [v.replace(' ', '_').lower() for v in all_fields]
+        )
+
+        # Handle Subsidiary
         if field == "Subsidiary":
-            raw_val = value.strip()
-            if raw_val in ("{Subsidiary}", "[Subsidiary]", "") or not raw_val:
-                ordered_values.append('"Friday Media Group (Consolidated)"')
-                continue
-        
-        # Check if field is an Account or Vendor field that should use * when empty or generic
-        if field in asterisk_fields:
-            # Check if it's empty or a generic placeholder
-            is_generic_placeholder = re.search(r'\[(Account|Vendor|Account Number|Account Name|Vendor Number|Vendor Name)\]', value, re.IGNORECASE)
-            if not value or is_generic_placeholder:
-                ordered_values.append('"*"')
-                continue
-        
-        # Handle Budget category default
-        if field == "Budget category":
-            raw_val = value.strip()
-            if raw_val in ("{Budget category}", "[Budget category]", "") or not raw_val:
-                ordered_values.append('"Standard Budget"')
-                continue
-        
-        # Check if it's an empty placeholder or empty string for other fields
-        is_empty_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
-        
-        if is_empty_placeholder or not value:
-            ordered_values.append("")
-            continue
-        
-        # Convert any square brackets to curly brackets but preserve the content
-        if isinstance(value, str) and ('[' in value or ']' in value):
-            content_match = re.search(r'\[(.*?)\]', value)
-            if content_match:
-                content = content_match.group(1).strip()
-                if content:
-                    value = content  # Just use the content without any brackets
+            if is_placeholder:
+                formula_str += '"Friday Media Group (Consolidated)"'
+            else:
+                # Use the provided value (e.g., "upconty" corrected to "Upcountry")
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value:
+                    formula_str += f'"{value}"'
                 else:
-                    value = ""
+                    formula_str += '"Friday Media Group (Consolidated)"'
+        # Handle From Period and To Period
+        elif field in ["From Period", "To Period"]:
+            if is_placeholder:
+                formula_str += '"Current month"'
+            else:
+                # Use the provided value (e.g., "Feb 2025")
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value:
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"Current month"'
+        # Handle other fields
+        elif is_placeholder:
+            # Output '*' for specified fields, comma for others
+            if field in asterisk_fields:
+                formula_str += '"*"'
+            else:
+                pass  # Outputs just a comma
+        else:
+            # Handle non-placeholder values
+            value = re.sub(r'[{}"\'\[\]]', '', value).strip()
 
-        # Remove any extra brackets and quotes to clean the value
-        clean_val = re.sub(r'[{}\"\'\[\]]', '', str(value)).strip()
-        
-        # Format all fields with quotes only, no curly brackets
-        ordered_values.append(f'"{clean_val}"')
+            # Handle array-like values (e.g., ["value1", "value2"])
+            if value.startswith('[') and value.endswith(']'):
+                # Strip outer brackets and split by commas
+                value = value[1:-1]
+                values = [v.strip().strip('"').strip("'") for v in value.split(',') if v.strip()]
+                if values:
+                    formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
+                else:
+                    # Empty array: output '*' for asterisk_fields, comma for others
+                    if field in asterisk_fields:
+                        formula_str += '"*"'
+                    else:
+                        pass
+            else:
+                # Single value: add quotes if not empty
+                if value:
+                    formula_str += f'"{value}"'
+                elif field in asterisk_fields:
+                    formula_str += '"*"'
 
-    # Join with commas, preserving empty values
-    formula_params = ", ".join(ordered_values)
-    return f'{formula_type}({formula_params})'
+        # Add comma if not the last parameter
+        if i < len(ordered_fields) - 1:
+            formula_str += ", "
 
-
-
+    formula_str += ")"
+    return formula_str
 
 # Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
@@ -208,39 +289,109 @@ if 'has_valid_api_key' not in st.session_state:
     st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = """...
-
 # Initialization and Streamlit components continue...
-
-
-        You are SuiteAI.
-
-        Instructions:
-        - Return exactly one valid SuiteReport formula if the user's request matches a formula.
-        - Supported formulas (strictly with required argument structure only):
-        - SUITEGEN({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEGENREP({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITECUS({Subsidiary}, [Customer], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        - SUITEVEN({Subsidiary}, [Vendor], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        - SUITEBUD({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEBUDREP({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEVAR({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEREC({EntityType})
-
-        Formula Purposes:
-        - SUITEGEN → Fetch general ledger/account aggregated totals, spend, and balances.
-        - SUITEGENREP → Fetch detailed transaction lists or summary reports for general ledger/accounts.
-        - SUITECUS → Fetch customer transactions or customer invoices.
-        - SUITEVEN → Fetch vendor transactions or vendor invoices.
-        - SUITEBUD → Fetch budgeted account totals, spend, and balances (month-wise).
-        - SUITEBUDREP → Fetch detailed or summary reports for budgeted accounts.
-        - SUITEVAR → Perform actual vs budget variance analysis.
-        - SUITEREC → SUITEREC → Fetch master lists of entity records such as customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories.
-
-        - Strictly follow the required argument sequence and argument count for each formula. Do not add or remove arguments.
-        - Use {} for dynamic single values, [] for dynamic multiple selections, and "" for fixed literal values.
-        - If a field is optional and not provided, leave a placeholder.
-        - If the prompt cannot map to a valid formula, politely guide the user without inventing a formula.
-        - If returning a formula, output only the formula — do not include any explanation, summary, or extra text.
+You are SuiteAI.
+Instructions:
+- Return one or more valid SuiteReport formulas depending on the user's intent:
+  - For most prompts, return a single formula.
+- For comparison or trend-analysis prompts, return **two SUITEGENPIV formulas** (one per time period), using identical structure except the From/To period fields.
+    - This includes:
+      - **Explicit comparison prompts** such as: "this year vs last year", "Q1 vs Q2", "compare", "versus", "vs"
+      - **Implicit comparison prompts** such as: "Why did revenue grow this year?", "What changed in Q1?", "Why did expenses increase?", "Where did costs rise recently?"
+- Output each formula on a new line. Do not explain or summarise the formula.
+------------------------------------------
+Supported formulas (strictly with required argument structure only - Never change or guess them):
+- SUITEGEN: Strictly return exactly 7 arguments in exactly below order:
+- SUITEGEN({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+- SUITEGENREP: Strictly return exactly 7 arguments in exactly below order:
+- SUITEGENREP({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+- SUITECUS: Strictly return exactly 8 arguments in exactly below order:
+- SUITECUS({Subsidiary}, [Customer], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
+- SUITEVEN: Strictly return exactly 8 arguments in exactly below order:
+- SUITEVEN({Subsidiary}, [Vendor], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
+- SUITEBUD: Strictly return exactly 8 arguments in exactly below order:
+- SUITEBUD({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+- SUITEBUDREP: Strictly return exactly 8 arguments in exactly below order:
+- SUITEBUDREP({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+- SUITEVAR: Strictly return exactly 8 arguments in exactly below order:
+- SUITEVAR({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
+- SUITEREC: Strictly return exactly 1 argument in exactly below order:
+- SUITEREC({EntityType})
+- SUITEREC: Always return exactly 5 arguments in exactly below order:
+- SUITEGENPIV({Subsidiary}, [Account], {From_Period}, {To_Period}, [Grouping and Filtering])
+❗ Always match formulas exactly as shown above. Never guess or create new argument patterns. Only use the exact structure and argument count listed.
+Never ever invent a new formula, or change order, or reduce or increase fields. You must strictly follow the exact formula.
+------------------------------------------
+Strict Rules for (SUITEGEN, SUITEGENREP, SUITECUS, SUITEVEN, SUITEBUD, SUITEBUDREP, SUITEVAR, SUITEREC):
+- Follow the required argument sequence and argument count for each formula.
+- Use {} for dynamic single values, [] for dynamic multiple selections, and must put either curly or square bracket with "" just like {""} or [""] for fixed literal values.
+- If a field is not provided, always leave a placeholder with it's original name like {subsidiary}, [class], [department], [location] etc. Never mix or swap subsidiary, budget_category, account_name, vendor, customer, class, department, and location based on guesswork.
+- If a prompt contains **multiple account names or customers, vendors, classes, departments, locations**, include them inside a single square-bracket array, only applicable to [account_name], [customer], [vendor], [class], [department], [location].
+- Do not invent formulas. Only return those listed above in exactly same order and exactly same number of arguments.
+- If returning a formula, return only the formula — no explanation, no commentary.
+- Always return SUITEVAR (not SUITEBUD) when prompt implies actual vs budget comparison (e.g., "compare", "variance", "difference", "actual vs budget", "budget vs spend").
+- {High_Low} and {Limit_of_Record} are only valid for SUITECUS and SUITEVEN, not for any other formula.
+- If the prompt cannot map to a valid formula, never invent or fabricate a formula. Instead: Provide NetSuite guidance where appropriate — e.g., explain how the action can be completed using NetSuite’s core functionality.
+------------------------------------------
+Strict rules for only SUITEGENPIV:
+- SUITEGENPIV strictly only include exactly five arguments:
+  ({Subsidiary}, [Account], {From_Period}, {To_Period}, [Grouping/Filtering Array])
+- The fifth and last argument must be a **single array** containing:
+  - One "group_by:" instruction (e.g. "group_by:department_sales")
+  - Optionally, one or more "filter_by:" instructions (e.g. filter_by:location="lahore")
+- ✅ If the user does not specify grouping dimensions explicitly,
+  **default to this structure**:
+  [group_by:class,department,location,vendor,customer]
+- For comparison or trend-analysis prompts, return **two SUITEGENPIV formulas** (one per time period), using identical structure except the From/To period fields.
+  This includes:(only for SUITEGENPIV)
+  - **Explicit comparison prompts**: "this year vs last year", "Q1 vs Q2", "compare", "versus", "vs"
+  - **Implicit comparison prompts**, even if phrased passively, such as:
+    - "Why did revenue grow this year?"
+    - "What changed in Q1?"
+    - "Why did expenses increase by customer?"
+    - "How did overhead increase?"
+- Follow the required argument sequence and argument count for SUITEGENPIV.
+- Use {} for dynamic single values, [] for dynamic multiple selections, and "" for fixed literal values.
+- If a field is not provided, always leave a placeholder name. Never makeup even if it does not make sense.
+SUITEGENPIV USES:
+- Typical use cases include:
+  - Identifying why revenue or spend changed over time
+  - Comparing grouped totals across periods for trend analysis
+  - Diagnosing unexpected changes in account-level performance
+------------------------------------------
+Supported formulas purpose:
+- SUITEGEN: Fetch general ledger/account totals, spend, and balances.
+- SUITEGENREP: Fetch general ledger/account transaction lists or summary reports.
+- SUITECUS: Fetch customer transactions or invoices.
+- SUITEVEN: Fetch vendor transactions or invoices.
+- SUITEBUD: Fetch budgeted account totals, spend, and balances.
+- SUITEBUDREP: Fetch budgeted account lists or budget detailed reports or budget list of transactions.
+- SUITEVAR: Perform actual vs budget variance analysis.
+- SUITEREC: Fetch master lists of records (e.g., customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories).
+- SUITEGENPIV: Fetch general ledger aggregated totals grouped by dimensions.  Strictly only used for comparative, diagnostic, and exploratory analysis across accounts, departments, classes, vendors, customers, or locations. Must not replace it with either SUITEGEN OR SUITEGENREP.
+------------------------------------------
+⏳ TIME PERIOD INSTRUCTIONS:
+- Always preserve the user's original time expressions exactly as stated.
+- Never assume actual dates or modify time phrases like "current month" or "last year".
+✅ Acceptable values (keep as-is):
+  - {"current month"}
+  - {"last month"}
+  - {"current quarter"}
+  - {"last quarter"}
+  - {"current year"}
+  - {"last year"}
+  - {"year to date"}
+  - {"ytd"}
+🗓️ Only convert to date format (e.g. "Jan 2024") **if and only if** the user states the period explicitly in that format.
+✅ Accept only this structure for dates:
+  - Month followed by 4-digit year (e.g. "Feb 2024", "Sep 2023")
+  - Do not reformat these. Use exactly as entered.
+🚫 Do NOT guess or inject specific dates like:
+  - "2024-05-01" or "March 1, 2024"
+  - Even if user says “this year” or “current month”, DO NOT convert them to date ranges.
+If unsure, keep the exact text (e.g. "current year") as the formula placeholder.
+🔁 **If no time period is mentioned in the prompt**, keep default placeholders:
+  - {From_Period} and {To_Period}
     """
 
 # Initialize session state for chat history
@@ -255,7 +406,7 @@ if not st.session_state.has_valid_api_key:
     st.warning("⚠️ **OpenAI API Key Required**: Please enter your OpenAI API key to use this application.", icon="⚠️")
 
     # API Key input outside of expander for visibility
-    new_key = st.text_input("OpenAI API Key", value="", type="password", 
+    new_key = st.text_input("OpenAI API Key", value="", type="password",
                            help="Enter your OpenAI API key. This is required to use the application.")
     if new_key:
         st.session_state.gpt_key = new_key
@@ -334,21 +485,15 @@ if query and st.session_state.has_valid_api_key:
 
         formula = content.strip() if content else ""
         parsed = parse_formula_to_intent(formula)
-        validated = validate_intent_fields_v2(parsed["intent"])
-        regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
 
-
-
-        if content:
-            # Add assistant message to chat
+        # Check if there was an error in parsing
+        if "error" in parsed:
+            # If there's a mismatch in formula parameters, just display the GPT response
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "Here's the formula you requested:",
+                "content": "Here's the GPT response:",
                 "formula": formula,
-                "normalized_query": normalized_query,
-                "intent_map": parsed,
-                "validated": validated,
-                "regenerated_formula": regenerated_formula
+                "normalized_query": normalized_query
             })
             with st.chat_message("assistant"):
                 # Display normalized query
@@ -358,16 +503,39 @@ if query and st.session_state.has_valid_api_key:
                 # Display GPT Response
                 st.markdown("**GPT Response:**")
                 st.code(formula, language="text")
-
-                # Display Validation Results
-                st.markdown("**Validation Results:**")
-                st.code(validated, language="text")
-
-                # Display Regenerated Formula
-                st.markdown("**Final Formula:**")
-                st.code(regenerated_formula, language="text")
         else:
-            st.error("No response generated")
+            validated = validate_intent_fields_v2(parsed["intent"])
+            regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
+
+            if content:
+                # Add assistant message to chat
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "Here's the formula you requested:",
+                    "formula": formula,
+                    "normalized_query": normalized_query,
+                    "intent_map": parsed,
+                    "validated": validated,
+                    "regenerated_formula": regenerated_formula
+                })
+                with st.chat_message("assistant"):
+                    # Display normalized query
+                    st.markdown("**Normalized Query:**")
+                    st.code(normalized_query, language="text")
+
+                    # Display GPT Response
+                    st.markdown("**GPT Response:**")
+                    st.code(formula, language="text")
+
+                    # Display Validation Results
+                    st.markdown("**Validation Results:**")
+                    st.code(validated, language="text")
+
+                    # Display Regenerated Formula
+                    st.markdown("**Final Formula:**")
+                    st.code(regenerated_formula, language="text")
+            else:
+                st.error("No response generated")
     except Exception as e:
         st.error(f"Error generating response: {str(e)}")
 
