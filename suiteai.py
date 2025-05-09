@@ -14,9 +14,6 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 model = os.getenv("OPENAI_MODEL")  
 
-# Initialize OpenAI client with API key from environment
-client = OpenAI(api_key=api_key)
-
 def normalize_prompt(text, threshold=85):
     """
     Normalize user prompts by expanding abbreviations and standardizing business terms.
@@ -47,19 +44,10 @@ def normalize_prompt(text, threshold=85):
         'vendor': 'vendor name'
     }
 
-    # First, expand abbreviations
-    words = text.split()
-    for i in range(len(words)):
-        if words[i] in abbrev_mapping:
-            words[i] = abbrev_mapping[words[i]]
-
-    # Reconstruct the text with expanded abbreviations
-    expanded_text = ' '.join(words)
-
-    # Now process the text for normalization
-    words = expanded_text.split()
-    dictionary_keys = list(normalisation_dict.keys())
+    # Split text into words, preserving spaces and special characters
+    words = re.findall(r'\b\w+\b|[^\w\s]', text)
     result = []
+    dictionary_keys = list(normalisation_dict.keys())
 
     # Process words one by one
     i = 0
@@ -68,6 +56,12 @@ def normalize_prompt(text, threshold=85):
         found_multi_word = False
         for j in range(min(3, len(words) - i), 1, -1):  # Try phrases up to 3 words long
             phrase = ' '.join(words[i:i+j])
+            # Skip normalization for specific phrases
+            if phrase in ["budget variance", "variance analysis"]:
+                result.append(phrase)
+                i += j
+                found_multi_word = True
+                break
             if phrase in normalisation_dict:
                 result.append(normalisation_dict[phrase])
                 i += j
@@ -79,16 +73,24 @@ def normalize_prompt(text, threshold=85):
 
         # If no multi-word match, try single word
         word = words[i]
-        if word in normalisation_dict:
+        # Check for abbreviations first
+        if word in abbrev_mapping:
+            result.append(abbrev_mapping[word])
+        elif word in normalisation_dict:
             result.append(normalisation_dict[word])
         else:
             # Only apply fuzzy matching to potential business terms
             # Skip common words, numbers, months, etc.
-            common_words = {'get', 'show', 'me', 'need', 'for', 'in', 'and', 'the', 'of', 'to', 'from',
-                           'report', 'data', 'info', 'details', 'forecast', 'standard', 'office', 'supplies'}
-            months = {'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
-                     'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september',
-                     'october', 'november', 'december'}
+            common_words = {
+                'get', 'show', 'me', 'need', 'for', 'in', 'and', 'the', 'of', 'to', 'from',
+                'report', 'data', 'info', 'details', 'forecast', 'standard', 'office', 'supplies',
+                'top'  # Added 'top' to preserve it
+            }
+            months = {
+                'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+                'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september',
+                'october', 'november', 'december'
+            }
 
             if (word in common_words or word in months or word.isdigit() or
                 len(word) <= 2 or any(c.isdigit() for c in word)):
@@ -102,7 +104,14 @@ def normalize_prompt(text, threshold=85):
                     result.append(word)
         i += 1
 
-    return ' '.join(result)
+    # Join words with single spaces and remove extra spaces
+    normalized_text = ' '.join(result)
+    # Remove spaces around underscores and hyphens
+    normalized_text = re.sub(r'\s*([-_])\s*', r'\1', normalized_text)
+    # Remove multiple spaces
+    normalized_text = re.sub(r'\s+', ' ', normalized_text).strip()
+    
+    return normalized_text
 
 def parse_formula_to_intent(formula_str: str):
     match = re.match(r'(\w+)\((.*)\)', formula_str)
@@ -133,6 +142,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
     Vendor Number, Customer Name, Customer Number; otherwise, outputs a comma.
     Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
     Uses 'Current month' for From Period and To Period if not mentioned.
+    For SUITEREC, uses TABLE_NAME directly from validated intent with proper quoting.
     """
     if formula_type not in formula_mapping:
         raise ValueError(f"Unknown formula type: {formula_type}")
@@ -141,6 +151,18 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
     # Build the formula string
     formula_str = formula_type + "("
+
+    # Handle SUITEREC specifically
+    if formula_type == "SUITEREC":
+        table_name = intent.get("TABLE_NAME", "").strip()
+        # Remove any curly braces or quotes that might come from validated intent
+        clean_table_name = re.sub(r'[{}"\'\[\]]', '', table_name).strip()
+        if clean_table_name:
+            formula_str += f'"{clean_table_name}"'
+        else:
+            formula_str += '""'  # Default to empty string if no valid table name
+        formula_str += ")"
+        return formula_str
 
     for i, field in enumerate(ordered_fields):
         value = intent.get(field, "").strip()
@@ -193,8 +215,8 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Additional values to treat as placeholders
         invalid_values = [
-            'vendor_name', 'high_low', 'high/low', 'limit of record', 'limit_of_record',
-            'high', 'low', 'account_number', 'account_name', 'customer_number',
+            'vendor_name', 'high_low', 'limit of record', 'limit_of_record',
+            'account_number', 'account_name', 'customer_number',
             'customer_name', 'vendor_number', 'budget_category', 'classification',
             'department', 'location', 'subsidiary', 'class', 'limit of records',
             'from period', 'to period', 'from_period', 'to_period', 'vendor name',
@@ -225,7 +247,6 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             if is_placeholder:
                 formula_str += '"Friday Media Group (Consolidated)"'
             else:
-                # Use the provided value (e.g., "upconty" corrected to "Upcountry")
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
                 if value:
                     formula_str += f'"{value}"'
@@ -236,38 +257,64 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             if is_placeholder:
                 formula_str += '"Current month"'
             else:
-                # Use the provided value (e.g., "Feb 2025")
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
                 if value:
                     formula_str += f'"{value}"'
                 else:
                     formula_str += '"Current month"'
+        # Handle high/low specifically
+        elif field == "high/low":
+            if clean_value in ['high', 'low']:
+                formula_str += f'"{clean_value}"'
+            elif is_placeholder:
+                formula_str += '"high/low"'
+            else:
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value:
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"high/low"'
+        # Handle Limit of record
+        elif field == "Limit of record":
+            if clean_value.isdigit():
+                formula_str += f'"{clean_value}"'
+            elif is_placeholder:
+                formula_str += '"10"'
+            else:
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value.isdigit():
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"10"'
         # Handle other fields
         elif is_placeholder:
-            # Output '*' for specified fields, comma for others
             if field in asterisk_fields:
                 formula_str += '"*"'
             else:
                 pass  # Outputs just a comma
         else:
-            # Handle non-placeholder values
             value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-
-            # Handle array-like values (e.g., ["value1", "value2"])
             if value.startswith('[') and value.endswith(']'):
-                # Strip outer brackets and split by commas
                 value = value[1:-1]
                 values = [v.strip().strip('"').strip("'") for v in value.split(',') if v.strip()]
                 if values:
                     formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
                 else:
-                    # Empty array: output '*' for asterisk_fields, comma for others
                     if field in asterisk_fields:
                         formula_str += '"*"'
                     else:
                         pass
             else:
-                # Single value: add quotes if not empty
+                # Handle Budget_Category
+                if field == "Budget_Category":
+                    if is_placeholder:
+                        formula_str += '"Standard Budget"'
+                    else:
+                        value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                        if value:
+                            formula_str += f'"{value}"'
+                        else:
+                            formula_str += '"Standard Budget"'
                 if value:
                     formula_str += f'"{value}"'
                 elif field in asterisk_fields:
@@ -288,8 +335,7 @@ if 'gpt_key' not in st.session_state:
 if 'has_valid_api_key' not in st.session_state:
     st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
-    st.session_state.system_prompt = """...
-# Initialization and Streamlit components continue...
+    st.session_state.system_prompt = """
 You are SuiteAI.
 Instructions:
 - Return one or more valid SuiteReport formulas depending on the user's intent:
@@ -403,7 +449,7 @@ st.title("Netsuite Formula Generator Chat")
 
 # API Key Check - Display prominent message if API key is missing
 if not st.session_state.has_valid_api_key:
-    st.warning("⚠️ **OpenAI API Key Required**: Please enter your OpenAI API key to use this application.", icon="⚠️")
+    st.warning("**OpenAI API Key Required**: Please enter your OpenAI API key to use this application.", icon="⚠️")
 
     # API Key input outside of expander for visibility
     new_key = st.text_input("OpenAI API Key", value="", type="password",
