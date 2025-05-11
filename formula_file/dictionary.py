@@ -11,7 +11,7 @@ normalisation_dict = {
     # Account Number
     'account number': 'Account_Number', 'acount number': 'Account_Number',
     'accout number': 'Account_Number', 'accont number': 'Account_Number',
-    'acoount no': 'Account_Number', 'account numbers': 'Account_Number',
+    'acoount no': 'Account_Number', 'account numbers': 'Account_Number', 
     'acc no': 'Account_Number', 'a/c no': 'Account_Number', 'acc#': 'Account_Number',
     'acct no': 'Account_Number', 'ac no': 'Account_Number', 'account id': 'Account_Number',
     'gl no': 'Account_Number', 'ledger id': 'Account_Number', 'ledger number': 'Account_Number',
@@ -19,7 +19,7 @@ normalisation_dict = {
 
     # Account Name
     'account name': 'Account_Name', 'acount name': 'Account_Name',
-    'accnt name': 'Account_Name', 'accont name': 'Account_Name',
+    'accnt name': 'Account_Name', 'accont name': 'Account_Name','a / c': 'Account_Name',
     'acc name': 'Account_Name', 'a/c name': 'Account_Name', 'acct name': 'Account_Name',
     'ledger account': 'Account_Name', 'gl account name': 'Account_Name',
     'ledger acc name': 'Account_Name', 'gl name': 'Account_Name',

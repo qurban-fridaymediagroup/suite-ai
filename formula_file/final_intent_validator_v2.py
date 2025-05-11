@@ -36,8 +36,8 @@ column_variations = {
     'Location': ['Location', 'Loc', 'Locations', 'location', 'loc'],
     'Budget category': ['Budget category', 'Budget_Category', 'Category', 'budget_category', 'bud', 'budget catgory'],
     'Currency': ['Currency', 'Currencies'],
-    'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number'],
-    'Account Name': ['Account Name', 'Account_Name', 'Acct_Name'],
+    'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number', 'a/c', 'account_name'],
+    'Account Name': ['Account Name', 'Account_Name', 'Acct_Name', 'a/c', 'account_name'],
     'Customer Number': ['Customer Number', 'Customer_No', 'Cust_Number', 'Customer_Number'],
     'Customer Name': ['Customer Name', 'Customer_Name', 'Cust_Name'],
     'Vendor Number': ['Vendor Number', 'Vendor_No', 'Vend_Number', 'Vendor', 'Vendors'],
@@ -97,6 +97,7 @@ field_format_map = {
     "Subsidiary": "Subsidiary",
     "Budget category": '"Budget category"',
     "Account Number": '{"Account Number"}',
+    "Account Number": '{"account_name"}',
     "Account Name": '{"Account Name"}',
     "From Period": '"From Period"',
     "To Period": '"To Period"',
@@ -117,35 +118,26 @@ placeholder_keys = list(field_format_map.keys())
 
 # Define formula mappings with correct parameter sequences
 formula_mapping = {
-    "SUITEGEN": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITECUS": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
-    "SUITEGENREP": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEGEN": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITECUS": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
+    "SUITEGENREP": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEREC": ["TABLE_NAME"],
-    "SUITEBUD": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEBUDREP": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVAR": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEBUD": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEBUDREP": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEVAR": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEVEN": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"]
 }
 
 # Extended formula mappings with variations
 extended_formula_mapping = {
-    "SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NUMBER": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
-    "SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME": ["Subsidiary", "Customer Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITECUS_CUSTOMER_NAME_ACCOUNT_NUMBER": ["Subsidiary", "Customer Name", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
     "SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEGEN_ACCOUNT_NUMBER": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME": ["Subsidiary", "Customer Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
     "SUITEGEN_ACCOUNT_NAME": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEVEN_VENDOR_NAME_ACCOUNT_NAME": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEVEN_VENDOR_NUMBER_ACCOUNT_NUMBER": ["Subsidiary", "Vendor Number", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
-    "SUITEVEN_VENDOR_NAME_ACCOUNT_NUMBER": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
     "SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME": ["Subsidiary", "Vendor Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEBUD_ACCOUNT_NUMBER": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEBUD_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEGENREP_ACCOUNT_NUMBER": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEGENREP_ACCOUNT_NAME": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEBUDREP_ACCOUNT_NUMBER": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEBUDREP_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVAR_ACCOUNT_NUMBER": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
     "SUITEVAR_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"]
 }
 
@@ -162,118 +154,67 @@ def get_formula_template(formula_type, intent_dict):
         clean_val = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
         if clean_val in ['none', '', 'null', 'placeholder']:
             return False
-        possible_values = canonical_values.get(field.lower(), [])
+        # Always match against Account Name column for both Account Name and Account Number
+        possible_values = canonical_values.get('account name', [])
         if not possible_values:
             return False
-        match = best_partial_match(clean_val, possible_vals, field)
+        match = best_partial_match(clean_val, possible_values, 'Account Name')
         return match is not None
 
     if formula_type == "SUITECUS":
         customer_number = intent_dict.get("Customer Number", "")
         customer_name = intent_dict.get("Customer Name", "")
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         
         has_customer_number = has_valid_match("Customer Number", customer_number)
         has_customer_name = has_valid_match("Customer Name", customer_name)
-        has_account_number = has_valid_match("Account Number", account_number)
         has_account_name = has_valid_match("Account Name", account_name)
         
-        if has_customer_number and has_account_number:
-            return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NUMBER"]
+        if has_customer_number and has_account_name:
+            return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
         elif has_customer_name and has_account_name:
             return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME"]
-        elif has_customer_name and has_account_number:
-            return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NUMBER"]
-        elif has_customer_number and has_account_name:
-            return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
-        return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEGEN":
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
-        
-        has_account_number = has_valid_match("Account Number", account_number)
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         has_account_name = has_valid_match("Account Name", account_name)
-        
-        if has_account_name:
-            return extended_formula_mapping["SUITEGEN_ACCOUNT_NAME"]
-        elif has_account_number:
-            return extended_formula_mapping["SUITEGEN_ACCOUNT_NUMBER"]
-        return extended_formula_mapping["SUITEGEN_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITEGEN_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEVEN":
         vendor_number = intent_dict.get("Vendor Number", "")
         vendor_name = intent_dict.get("Vendor Name", "")
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         
         has_vendor_number = has_valid_match("Vendor Number", vendor_number)
-        has_vendor_name = has_valid_match("Vendor Name", vendor_name)  # FIXED: Corrected typo and syntax
-        has_account_number = has_valid_match("Account Number", account_number)
+        has_vendor_name = has_valid_match("Vendor Name", vendor_name)
         has_account_name = has_valid_match("Account Name", account_name)
         
         if has_vendor_name and has_account_name:
             return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
-        elif has_vendor_number and has_account_number:
-            return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NUMBER"]
-        elif has_vendor_name and has_account_number:
-            return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NUMBER"]
         elif has_vendor_number and has_account_name:
             return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME"]
         return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEBUD":
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
-        
-        has_account_number = has_valid_match("Account Number", account_number)
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         has_account_name = has_valid_match("Account Name", account_name)
-        
-        if has_account_name:
-            return extended_formula_mapping["SUITEBUD_ACCOUNT_NAME"]
-        elif has_account_number:
-            return extended_formula_mapping["SUITEBUD_ACCOUNT_NUMBER"]
-        return extended_formula_mapping["SUITEBUD_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITEBUD_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEGENREP":
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
-        
-        has_account_number = has_valid_match("Account Number", account_number)
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         has_account_name = has_valid_match("Account Name", account_name)
-        
-        if has_account_name:
-            return extended_formula_mapping["SUITEGENREP_ACCOUNT_NAME"]
-        elif has_account_number:
-            return extended_formula_mapping["SUITEGENREP_ACCOUNT_NUMBER"]
-        return extended_formula_mapping["SUITEGENREP_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITEGENREP_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEBUDREP":
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
-        
-        has_account_number = has_valid_match("Account Number", account_number)
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         has_account_name = has_valid_match("Account Name", account_name)
-        
-        if has_account_name:
-            return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NAME"]
-        elif has_account_number:
-            return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NUMBER"]
-        return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NAME"]
     
     elif formula_type == "SUITEVAR":
-        account_number = intent_dict.get("Account Number", "")
-        account_name = intent_dict.get("Account Name", "")
-        
-        has_account_number = has_valid_match("Account Number", account_number)
+        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         has_account_name = has_valid_match("Account Name", account_name)
-        
-        if has_account_name:
-            return extended_formula_mapping["SUITEVAR_ACCOUNT_NAME"]
-        elif has_account_number:
-            return extended_formula_mapping["SUITEVAR_ACCOUNT_NUMBER"]
-        return extended_formula_mapping["SUITEVAR_ACCOUNT_NUMBER"]
+        return extended_formula_mapping["SUITEVAR_ACCOUNT_NAME"]
     
     return formula_mapping.get(formula_type, [])
 
@@ -291,11 +232,21 @@ def format_formula_with_intent(formula_type, intent_dict):
     for field in template:
         value = intent_dict.get(field, "")
         
+        # Handle Account Name/Number missing case
+        if field in ["Account Name", "Account Number"]:
+            if not value.strip() or value.strip() in ['', 'none', 'null', 'placeholder', '[account_name]']:
+                params.append('"*"')
+                continue
+            
         if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
             params.append(f'"{value}"')
-        elif field in ["Customer Number", "Customer Name", "Account Number", "Account Name", 
+        elif field in ["Customer Number", "Customer Name", "Account Name", "account_name"
                        "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
-            params.append(f'{{"{value}"}}')
+            # Handle Class field separately to avoid incorrect formatting
+            if field == "Class" and not value.strip():
+                params.append("")
+            else:
+                params.append(f'{{"{value}"}}')
         else:
             params.append(f'"{value}"')
     
@@ -373,7 +324,7 @@ def validate_gpt_formula_output(gpt_formula: str) -> dict:
     
     return intent_dict
 
-def process_gpt_formula(gpt_formula: str):
+def process_gpt_formula(gpt_formula: str, original_query: str = ""):
     """
     Process a GPT formula and return validated intent
     """
@@ -392,7 +343,7 @@ def process_gpt_formula(gpt_formula: str):
             clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip()
             processed_intent[field] = clean_val
     
-    validation_result = validate_intent_fields_v2(processed_intent)
+    validation_result = validate_intent_fields_v2(processed_intent, original_query)
     validation_result["formula_type"] = formula_type
     
     return validation_result
@@ -448,8 +399,8 @@ def best_partial_match(input_val, possible_vals, field_name=None):
         "Location": 70,
         "Budget category": 60,
         "Currency": 80,
-        "Account Number": 70,
-        "Account Name": 60,
+        "Account Number": 60,  # Adjusted to match Account Name
+        "Account Name": 60,    # Increased to avoid unrelated matches
         "Customer Number": 75,
         "Customer Name": 60,
         "Vendor Number": 80,
@@ -463,31 +414,35 @@ def best_partial_match(input_val, possible_vals, field_name=None):
         if input_val == val.lower():
             return val
     
-    # Enhanced substring match with word overlap and partial ratio for key fields
-    if field_name in ["Location", "Account Name", "Account Number", "Budget category", "Customer Number", "Customer Name"]:
-        for val in possible_vals:
-            val_lower = val.lower()
-            input_words = input_val.split()
-            val_words = val_lower.split()
-            # Check substring, first three chars, and word overlap
-            if (input_val in val_lower or val_lower in input_val or 
-                input_val[:3] in val_lower or val_lower[:3] in input_val or
-                any(word in val_words for word in input_words if len(word) > 2)):
-                return val
-        if field_name == "Account Number" and input_val in ["travel", "trav", "expense", "exp"]:
+    # Enhanced matching for Account Name
+    if field_name in ["Account Name", "Account Number"]:
+        travel_aliases = ["travel", "trav", "expense", "exp"]
+        if input_val in travel_aliases:
+            # Prioritize matches containing "travel"
+            travel_matches = [val for val in possible_vals if "travel" in val.lower()]
+            if travel_matches:
+                # Use token_sort_ratio for better word-order matching
+                match, score, _ = process.extractOne(input_val, travel_matches, scorer=fuzz.token_sort_ratio)
+                if score >= 65:
+                    return match
+            # Fallback to partial_ratio for aliases
             match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
             if score >= 65:
                 return match
     
-    # General substring match
+    # General substring match with word overlap
     for val in possible_vals:
         val_lower = val.lower()
-        if input_val in val_lower or val_lower in input_val:
+        input_words = input_val.split()
+        val_words = val_lower.split()
+        if (input_val in val_lower or val_lower in input_val or 
+            input_val[:3] in val_lower or val_lower[:3] in input_val or
+            any(word in val_words for word in input_words if len(word) > 2)):
             return val
     
-    # Use partial_ratio for key fields to catch typos
-    if field_name in ["Location", "Account Name", "Budget category", "Customer Name", "Customer Number", "Account Number"]:
-        match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
+    # Use token_sort_ratio for fields to handle word order
+    if field_name in ["Location", "Account Name", "Account Number", "Budget category", "Customer Name", "Customer Number"]:
+        match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.token_sort_ratio)
         if score >= threshold - 5:
             return match
     
@@ -499,7 +454,7 @@ def best_partial_match(input_val, possible_vals, field_name=None):
     return None
 
 # Main validation function
-def validate_intent_fields_v2(intent_dict):
+def validate_intent_fields_v2(intent_dict, original_query=""):
     validated = {}
     notes = {}
     warnings = []
@@ -518,8 +473,6 @@ def validate_intent_fields_v2(intent_dict):
     to_val = intent_dict.get("To Period", "")
     from_val_clean = re.sub(r'[{}\"]', '', str(from_val)).strip()
     to_val_clean = re.sub(r'[{}\"]', '', str(to_val)).strip()
-    from_is_placeholder = any(re.search(pattern, str(from_val)) for pattern in placeholder_patterns)
-    to_is_placeholder = any(re.search(pattern, str(to_val)) for pattern in placeholder_patterns)
     
     try:
         from_p, to_p = get_period_range(from_val_clean, to_val_clean or from_val_clean)
@@ -545,9 +498,21 @@ def validate_intent_fields_v2(intent_dict):
     
     # Ensure matching for all formula fields
     key_fields = [
-        "Location", "Account Name", "Account Number", "Budget category",
+        "Location", "Account Name", "Budget category",
         "Customer Name", "Customer Number"
     ]
+    
+    # Check if Account Name or Account Number is specified
+    account_name_val = intent_dict.get("Account Name", "")
+    account_number_val = intent_dict.get("Account Number", "")
+    account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
+    account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
+    account_is_placeholder = (
+        any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
+        account_name_clean in ['account_name', 'account name', ''] or
+        any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
+        account_number_clean in ['account_number', 'account number', '']
+    )
     
     # Handle other fields
     for key, value in intent_dict.items():
@@ -557,9 +522,14 @@ def validate_intent_fields_v2(intent_dict):
         is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
         clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
         
-        if key == "Budget category" and is_placeholder:
+        if key == "Account Name" and account_is_placeholder and not account_number_clean:
+            validated[key] = '"*"'
+            notes[key] = "No account specified, using wildcard"
+            continue
+        
+        if key == "Budget category" and (is_placeholder or clean_val in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory']):
             validated[key] = '"Standard Budget"'
-            notes[key] = "Default to Standard Budget (placeholder)"
+            notes[key] = "Default to Standard Budget"
             continue
         
         if is_placeholder and (
@@ -570,7 +540,7 @@ def validate_intent_fields_v2(intent_dict):
             notes[key] = "Generic placeholder preserved"
             continue
         
-        if is_placeholder:
+        if is_placeholder and key not in ["Account Name"]:
             validated[key] = format_placeholder(value)
             notes[key] = "Placeholder preserved"
             continue
@@ -578,8 +548,15 @@ def validate_intent_fields_v2(intent_dict):
         canonical_col = unified_columns.get(key, key).lower()
         possible_values = canonical_values.get(canonical_col, [])
         
+        if key == "Account Number":
+            canonical_col = 'account name'  # Always match Account Number against Account Name column
+            possible_values = canonical_values.get(canonical_col, [])
+        
         if key.lower() == "high/low":
-            if clean_val in ["high", "low"]:
+            if original_query.lower().find("lowest") != -1:
+                validated[key] = "low"
+                notes[key] = "Set to low based on query"
+            elif clean_val in ["high", "low"]:
                 validated[key] = clean_val
                 notes[key] = "Exact match"
             elif "high_low" in clean_val:
@@ -625,14 +602,14 @@ def validate_intent_fields_v2(intent_dict):
                     matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
                                     if v.strip().lower() == partial.strip().lower()), partial)
                     validated[key] = matched
-                    notes[key] = "Partial match" if matched.strip().lower() != clean_val else "Exact match"
+                    notes[key] = "Partial match"
                 else:
                     validated[key] = partial
                     notes[key] = "Partial match (no column mapping)"
             else:
                 found = False
                 for other_col, other_vals in canonical_values.items():
-                    if other_col != canonical_col:
+                    if other_col != canonical_col and other_col != 'account name':
                         if clean_val in other_vals:
                             validated[key] = clean_val
                             notes[key] = f"Found in {other_col} column"
@@ -715,10 +692,8 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         "Budget category": 55,
         "Currency": 80,
         "Account type": 60,
-        "Account Number": 70,
-        "Account_Name": 60,
-        "Account Name": 60,
-        "Account_Number": 70,
+        "Account Number": 60,  # Adjusted to match Account Name
+        "Account Name": 60,    # Increased threshold
         "Customer Number": 75,
         "Customer Name": 60,
         "Vendor Number": 80,
@@ -733,7 +708,7 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
     ]
     
     key_fields = [
-        "Location", "Account Name", "Account Number", "Budget category",
+        "Location", "Account Name", "Budget category",
         "Customer Name", "Customer Number"
     ]
     
@@ -764,9 +739,17 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         ]:
             corrected_intent[field] = value
             continue
+        
+        if field == "Account Name" and value == '"*"':
+            corrected_intent[field] = value
+            continue
             
         canonical_col = unified_columns.get(field, field).lower()
         possible_values = canonical_values.get(canonical_col, [])
+        if field == "Account Number":
+            canonical_col = 'account name'  # Always match Account Number against Account Name column
+            possible_values = canonical_values.get(canonical_col, [])
+            
         if not possible_values:
             if field == "Budget category":
                 corrected_intent[field] = '"Standard Budget"'
@@ -812,7 +795,7 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
                     corrected_intent[field] = value
                     continue
         
-        if field in ["Customer Number", "Customer Name", "Account Number", "Account Name",
+        if field in ["Customer Number", "Customer Name", "Account Name",
                      "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
             formatted = f'{{"{original_case}"}}'
         elif field in ["Subsidiary", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
