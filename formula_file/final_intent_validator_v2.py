@@ -397,21 +397,21 @@ def best_partial_match(input_val, possible_vals, field_name=None):
     # Field-specific thresholds
     field_thresholds = {
         "Subsidiary": 80,
-        "Classification": 60,
-        "Class": 60,
-        "Department": 60,
-        "Location": 70,
-        "Budget category": 60,
+        "Classification": 80,
+        "Class": 80,
+        "Department": 80,
+        "Location": 80,
+        "Budget category": 80,
         "Currency": 80,
-        "Account Number": 85,  # Adjusted to match Account Name
-        "Account Name": 85,    # Increased to avoid unrelated matches
-        "Customer Number": 75,
-        "Customer Name": 60,
-        "Vendor Number": 80,
-        "Vendor Name": 65
+        "Account Number": 85,  
+        "Account Name": 85,   
+        "Customer Number": 85,
+        "Customer Name": 85,
+        "Vendor Number": 85,
+        "Vendor Name": 85
     }
     
-    threshold = field_thresholds.get(field_name, 60)
+    threshold = field_thresholds.get(field_name, 85)
     
     # First try exact match
     for val in possible_vals:
@@ -427,11 +427,11 @@ def best_partial_match(input_val, possible_vals, field_name=None):
             if travel_matches:
                 # Use token_sort_ratio for better word-order matching
                 match, score, _ = process.extractOne(input_val, travel_matches, scorer=fuzz.token_sort_ratio)
-                if score >= 80:
+                if score >= 85:
                     return match
             # Fallback to partial_ratio for aliases
             match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
-            if score >= 80:
+            if score >= 85:
                 return match
     
     # General substring match with word overlap
