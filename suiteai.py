@@ -160,10 +160,17 @@ def parse_formula_to_intent(formula_str: str):
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
-
+    
+    # Create the intent dictionary
+    intent_dict = dict(zip(formula_mapping[formula_type], params))
+    
+    # Check for [account_name] or [account_number] in the formula and mark it for asterisk
+    has_account_name_placeholder = '[account_name]' in formula_str.lower() or '[account_number]' in formula_str.lower()
+    
     return {
         "formula_type": formula_type,
-        "intent": dict(zip(formula_mapping[formula_type], params))
+        "intent": intent_dict,
+        "has_account_name_placeholder": has_account_name_placeholder
     }
 
 def format_all_formula_mappings(mapping: dict) -> str:
@@ -171,15 +178,15 @@ def format_all_formula_mappings(mapping: dict) -> str:
         [f"{name}({', '.join(params)})" for name, params in mapping.items()]
     )
 
-
-
-def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
+def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict, has_account_name_placeholder: bool = False) -> str:
     """
     Generate NetSuite formula using the validated intent, maintaining the order and formula type.
-    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name,
-    Vendor Number, Customer Name, Customer Number; otherwise, outputs empty string for empty fields
-    to ensure distinct commas. Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder
-    or missing. Uses 'Current month' for From Period and To Period if not mentioned.
+    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name, account_name,
+    Vendor Number, Customer Name, Customer Number; outputs '*' for [account_name] in validation and final response.
+    Hard-codes 'Accounts Receivable' for Account Name in the final formula.
+    Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
+    Uses 'Current month' for From Period and To Period if not mentioned.
+    Use "*" for account_name in validation and final response if it present in GPT response.
     For SUITEREC, uses TABLE_NAME directly from validated intent with proper quoting.
     """
     if formula_type not in formula_mapping:
@@ -304,9 +311,22 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     # Get current month and year as default
                     current_month_year = datetime.now().strftime("%B %Y")
                     formula_str += f'"{current_month_year}"'
+        # Handle Account Name with hard-coded value
+        elif field == "Account Name":
+            if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
+                formula_str += '"*"'  # Output * for [account_name], [account_number], or account_name
+            else:
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value:
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"Accounts Receivable"'  # Hard-code Accounts Receivable
         # Handle other fields
         elif is_placeholder:
-            if field in asterisk_fields:
+            # Force asterisk for Account Name if [account_name] was in the original formula
+            if field == "Account Name" and has_account_name_placeholder:
+                formula_str += '"*"'  # Output * for validation
+            elif field in asterisk_fields:
                 formula_str += '"*"'
             else:
                 # For non-asterisk placeholder fields, output empty string to ensure comma
@@ -359,7 +379,8 @@ if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = """
 You are SuiteAI.
 Instructions:
-- Return one or more valid SuiteReport formulas depending on the user's intent:
+- Return one or more valid SuiteReport formulas depending on the user's Generations of Programming Languages
+intent:
   - For most prompts, return a single formula.
 - For comparison or trend-analysis prompts, return **two SUITEGENPIV formulas** (one per time period), using identical structure except the From/To period fields.
     - This includes:
@@ -399,6 +420,7 @@ Strict Rules for (SUITEGEN, SUITEGENREP, SUITECUS, SUITEVEN, SUITEBUD, SUITEBUDR
 - Always return SUITEVAR (not SUITEBUD) when prompt implies actual vs budget comparison (e.g., "compare", "variance", "difference", "actual vs budget", "budget vs spend").
 - {High_Low} and {Limit_of_Record} are only valid for SUITECUS and SUITEVEN, not for any other formula.
 - If the prompt cannot map to a valid formula, never invent or fabricate a formula. Instead: Provide NetSuite guidance where appropriate — e.g., explain how the action can be completed using NetSuite’s core functionality.
+- For [account_name] or [account_number], output [*] in formula.
 ------------------------------------------
 Strict rules for only SUITEGENPIV:
 - SUITEGENPIV strictly only include exactly five arguments:
@@ -435,7 +457,7 @@ Supported formulas purpose:
 - SUITEBUDREP: Fetch budgeted account lists or budget detailed reports or budget list of transactions.
 - SUITEVAR: Perform actual vs budget variance analysis.
 - SUITEREC: Fetch master lists of records (e.g., customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories).
-- SUITEGENPIV: Fetch general ledger aggregated totals grouped by dimensions.  Strictly only used for comparative, diagnostic, and exploratory analysis across accounts, departments, classes, vendors, customers, or locations. Must not replace it with either SUITEGEN OR SUITEGENREP.
+- SUITEGENPIV: Fetch general ledger aggregated totals grouped by dimensions.  Strictly only used for comparative,diagnostic, and exploratory analysis across accounts, departments, classes, vendors, customers, or locations. Must not replace it with either SUITEGEN OR SUITEGENREP.
 ------------------------------------------
 ⏳ TIME PERIOD INSTRUCTIONS:
 - Always preserve the user's original time expressions exactly as stated.
@@ -549,8 +571,10 @@ if query and st.session_state.has_valid_api_key:
 
         content = response.choices[0].message.content
         # Check if content exists before calling strip()
-
         formula = content.strip() if content else ""
+        # Replace [account_name] or account_name with [*] in GPT response for SUITECUS
+        if formula.startswith('SUITECUS'):
+            formula = re.sub(r'\[account_name\]|account_name', '[*]', formula, flags=re.IGNORECASE)
         parsed = parse_formula_to_intent(formula)
 
         # Check if there was an error in parsing
@@ -572,7 +596,17 @@ if query and st.session_state.has_valid_api_key:
                 st.code(formula, language="text")
         else:
             validated = validate_intent_fields_v2(parsed["intent"])
-            regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
+            # Replace [account_name], account_name, or [*] with "*" in validated intent for Account Name
+            if 'Account Name' in validated['validated_intent'] and (
+                validated['validated_intent']['Account Name'].lower() in ['[account_name]', 'account_name', '[*]']
+            ):
+                validated['validated_intent']['Account Name'] = '"*"'
+            regenerated_formula = generate_formula_from_intent(
+                parsed["formula_type"], 
+                validated["validated_intent"], 
+                formula_mapping,
+                has_account_name_placeholder=parsed["has_account_name_placeholder"]
+            )
 
             if content:
                 # Add assistant message to chat
@@ -596,7 +630,7 @@ if query and st.session_state.has_valid_api_key:
 
                     # Display Validation Results
                     st.markdown("**Validation Results:**")
-                    st.code(validated, language="text")
+                    st.code(str(validated), language="text")
 
                     # Display Regenerated Formula
                     st.markdown("**Final Formula:**")
