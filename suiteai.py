@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
 from rapidfuzz import process, fuzz
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +66,18 @@ def normalize_prompt(text, threshold=85):
                 found_multi_word = True
                 break
             if phrase in normalisation_dict:
+                # Special case for "budget report" or similar phrases
+                if "budget" in phrase and "category" not in phrase:
+                    result.append("Budget")
+                    # Add the remaining words separately
+                    for k in range(1, j):
+                        if words[i+k] in normalisation_dict:
+                            result.append(normalisation_dict[words[i+k]])
+                        else:
+                            result.append(words[i+k])
+                    i += j
+                    found_multi_word = True
+                    break
                 result.append(normalisation_dict[phrase])
                 i += j
                 found_multi_word = True
@@ -79,7 +92,14 @@ def normalize_prompt(text, threshold=85):
         if word in abbrev_mapping:
             result.append(abbrev_mapping[word])
         elif word in normalisation_dict:
-            result.append(normalisation_dict[word])
+            # Special case for "budget" - don't convert to "Budget_Category"
+            if word.lower() == "budget":
+                result.append("Budget")
+            # Special case for "subsistence" - treat as account name, not subsidiary
+            elif word.lower() == "subsistence":
+                result.append("Account_Name subsistence")
+            else:
+                result.append(normalisation_dict[word])
         else:
             # Only apply fuzzy matching to potential business terms
             # Skip common words, numbers, months, etc.
@@ -101,9 +121,23 @@ def normalize_prompt(text, threshold=85):
                 # Try fuzzy matching for potential business terms
                 match, score, _ = process.extractOne(word, dictionary_keys, scorer=fuzz.WRatio)
                 if score >= threshold:
-                    result.append(normalisation_dict[match])
+                    # Special case for fuzzy matching "budget"
+                    if match.lower() == "budget" or "budget" in match.lower():
+                        result.append("Budget")
+                    # Special case for fuzzy matching "subsistence"
+                    elif match.lower() == "subsistence" or word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
+                    # Special case for fuzzy matching "subsidiary"
+                    elif match.lower() == "subsidiary" and word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
+                    else:
+                        result.append(normalisation_dict[match])
                 else:
-                    result.append(word)
+                    # Special case for "subsistence" when no match is found
+                    if word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
+                    else:
+                        result.append(word)
         i += 1
 
     # Join words with single spaces and remove extra spaces
@@ -137,13 +171,15 @@ def format_all_formula_mappings(mapping: dict) -> str:
         [f"{name}({', '.join(params)})" for name, params in mapping.items()]
     )
 
+
+
 def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
     """
     Generate NetSuite formula using the validated intent, maintaining the order and formula type.
     Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name,
-    Vendor Number, Customer Name, Customer Number; otherwise, outputs a comma.
-    Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
-    Uses 'Current month' for From Period and To Period if not mentioned.
+    Vendor Number, Customer Name, Customer Number; otherwise, outputs empty string for empty fields
+    to ensure distinct commas. Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder
+    or missing. Uses 'Current month' for From Period and To Period if not mentioned.
     For SUITEREC, uses TABLE_NAME directly from validated intent with proper quoting.
     """
     if formula_type not in formula_mapping:
@@ -171,7 +207,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Define all fields to check for placeholders
         all_fields = [
-            "Subsidiary", "Account Number", "Account Name", "Classification",
+            "Subsidiary", "Account Number", "Account Name", "Classification", "account_name",
             "Department", "Location", "Customer Number", "Customer Name",
             "Vendor Name", "Vendor Number", "Class", "high/low", "Limit of Records",
             "Budget category", "From Period", "To Period", "TABLE_NAME",
@@ -201,7 +237,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Fields that should output '*' when placeholder or missing
         asterisk_fields = [
-            "Account Name", "Account Number", "Vendor Name", "Vendor Number",
+            "Account Name", "Account Number", "Vendor Name", "Vendor Number", "account_name",
             "Customer Name", "Customer Number"
         ]
 
@@ -223,7 +259,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             'department', 'location', 'subsidiary', 'class', 'limit of records',
             'from period', 'to period', 'from_period', 'to_period', 'vendor name',
             'customer number', 'customer name', 'vendor number', 'account number',
-            'account name', 'budget category', 'budget','table_name', 'grouping and filtering',
+            'account name', 'budget category', 'budget', 'table_name', 'grouping and filtering',
             'grouping_and_filtering', '', 'none', 'null', 'placeholder'
         ]
 
@@ -256,44 +292,25 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     formula_str += '"Friday Media Group (Consolidated)"'
         # Handle From Period and To Period
         elif field in ["From Period", "To Period"]:
-            if is_placeholder:
-                formula_str += '"Current month"'
+            if is_placeholder or (isinstance(value, str) and "current month" in value.lower()):
+                # Get current month and year
+                current_month_year = datetime.now().strftime("%B %Y")
+                formula_str += f'"{current_month_year}"'
             else:
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
                 if value:
                     formula_str += f'"{value}"'
                 else:
-                    formula_str += '"Current month"'
-        # Handle high/low specifically
-        elif field == "high/low":
-            if clean_value in ['high', 'low']:
-                formula_str += f'"{clean_value}"'
-            elif is_placeholder:
-                formula_str += '"high/low"'
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"high/low"'
-        # Handle Limit of record
-        elif field == "Limit of record":
-            if clean_value.isdigit():
-                formula_str += f'"{clean_value}"'
-            elif is_placeholder:
-                formula_str += '"10"'
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value.isdigit():
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"10"'
+                    # Get current month and year as default
+                    current_month_year = datetime.now().strftime("%B %Y")
+                    formula_str += f'"{current_month_year}"'
         # Handle other fields
         elif is_placeholder:
             if field in asterisk_fields:
                 formula_str += '"*"'
             else:
-                pass  # Outputs just a comma
+                # For non-asterisk placeholder fields, output empty string to ensure comma
+                formula_str += '""'
         else:
             value = re.sub(r'[{}"\'\[\]]', '', value).strip()
             if value.startswith('[') and value.endswith(']'):
@@ -305,10 +322,10 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     if field in asterisk_fields:
                         formula_str += '"*"'
                     else:
-                        pass
+                        formula_str += '""'
             else:
-                # Handle Budget_Category
-                if field == "Budget_Category":
+                # Handle Budget category
+                if field == "Budget category":
                     if is_placeholder:
                         formula_str += '"Standard Budget"'
                     else:
@@ -317,10 +334,12 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                             formula_str += f'"{value}"'
                         else:
                             formula_str += '"Standard Budget"'
-                if value:
+                elif value:
                     formula_str += f'"{value}"'
                 elif field in asterisk_fields:
                     formula_str += '"*"'
+                else:
+                    formula_str += '""'
 
         # Add comma if not the last parameter
         if i < len(ordered_fields) - 1:
@@ -328,7 +347,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
     formula_str += ")"
     return formula_str
-
+    
 # Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
     st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BU8GWu9n"
