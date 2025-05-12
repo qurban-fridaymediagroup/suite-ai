@@ -297,7 +297,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                 formula_str += '"*"'
             else:
                 # For non-asterisk placeholder fields, output empty string to ensure comma
-                formula_str += '","'
+                formula_str += '""'
         else:
             value = re.sub(r'[{}"\'\[\]]', '', value).strip()
             if value.startswith('[') and value.endswith(']'):
@@ -309,7 +309,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     if field in asterisk_fields:
                         formula_str += '"*"'
                     else:
-                        formula_str += '","'
+                        formula_str += '""'
             else:
                 # Handle Budget category
                 if field == "Budget category":
@@ -326,7 +326,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                 elif field in asterisk_fields:
                     formula_str += '"*"'
                 else:
-                    formula_str += '","'
+                    formula_str += '""'
 
         # Add comma if not the last parameter
         if i < len(ordered_fields) - 1:
