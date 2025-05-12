@@ -95,6 +95,9 @@ def normalize_prompt(text, threshold=85):
             # Special case for "budget" - don't convert to "Budget_Category"
             if word.lower() == "budget":
                 result.append("Budget")
+            # Special case for "subsistence" - treat as account name, not subsidiary
+            elif word.lower() == "subsistence":
+                result.append("Account_Name subsistence")
             else:
                 result.append(normalisation_dict[word])
         else:
@@ -121,10 +124,20 @@ def normalize_prompt(text, threshold=85):
                     # Special case for fuzzy matching "budget"
                     if match.lower() == "budget" or "budget" in match.lower():
                         result.append("Budget")
+                    # Special case for fuzzy matching "subsistence"
+                    elif match.lower() == "subsistence" or word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
+                    # Special case for fuzzy matching "subsidiary"
+                    elif match.lower() == "subsidiary" and word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
                     else:
                         result.append(normalisation_dict[match])
                 else:
-                    result.append(word)
+                    # Special case for "subsistence" when no match is found
+                    if word.lower() == "subsistence":
+                        result.append("Account_Name subsistence")
+                    else:
+                        result.append(word)
         i += 1
 
     # Join words with single spaces and remove extra spaces
