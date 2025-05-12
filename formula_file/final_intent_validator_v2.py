@@ -12,6 +12,7 @@ from formula_file.smart_intent_correction import smart_intent_correction_restric
 from formula_file.constants import unified_columns
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+
 # Load NetSuite data
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, "Netsuite info all final data.csv")
@@ -37,7 +38,7 @@ column_variations = {
     'Location': ['Location', 'Loc', 'Locations', 'location', 'loc'],
     'Budget category': ['Budget category', 'Budget_Category', 'Category', 'budget_category', 'bud', 'budget catgory'],
     'Currency': ['Currency', 'Currencies'],
-    'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number', 'a/c', 'account_name'],
+    'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number'],
     'Account Name': ['Account Name', 'Account_Name', 'Acct_Name', 'a/c', 'account_name'],
     'Customer Number': ['Customer Number', 'Customer_No', 'Cust_Number', 'Customer_Number'],
     'Customer Name': ['Customer Name', 'Customer_Name', 'Cust_Name'],
@@ -50,7 +51,7 @@ column_variations = {
 column_mapping = {}
 csv_columns = list(netsuite_df.columns)
 for expected_col, variations in column_variations.items():
-    best_match = None
+    best_match = None       
     best_score = 0
     for variation in variations:
         match, score, _ = process.extractOne(variation.lower(), csv_columns, scorer=fuzz.WRatio)
@@ -98,7 +99,6 @@ field_format_map = {
     "Subsidiary": "Subsidiary",
     "Budget category": '"Budget category"',
     "Account Number": '{"Account Number"}',
-    "Account Number": '{"account_name"}',
     "Account Name": '{"Account Name"}',
     "From Period": '"From Period"',
     "To Period": '"To Period"',
@@ -397,23 +397,23 @@ def best_partial_match(input_val, possible_vals, field_name=None):
     # Field-specific thresholds
     field_thresholds = {
         "Subsidiary": 80,
-        "Classification": 60,
-        "Class": 60,
-        "Department": 60,
-        "Location": 70,
-        "Budget category": 60,
+        "Classification": 80,
+        "Class": 80,
+        "Department": 80,
+        "Location": 80,
+        "Budget category": 80,
         "Currency": 80,
-        "Account Number": 85,  # Adjusted to match Account Name
-        "Account Name": 85,    # Increased to avoid unrelated matches
-        "Customer Number": 75,
-        "Customer Name": 60,
-        "Vendor Number": 80,
-        "Vendor Name": 65
+        "Account Number": 85,  
+        "Account Name": 85,   
+        "Customer Number": 85,
+        "Customer Name": 85,
+        "Vendor Number": 85,
+        "Vendor Name": 85
     }
     
-    threshold = field_thresholds.get(field_name, 60)
+    threshold = field_thresholds.get(field_name, 85)
     
-    # First try exact match
+    # First try exact match (case-insensitive)
     for val in possible_vals:
         if input_val == val.lower():
             return val
@@ -427,12 +427,23 @@ def best_partial_match(input_val, possible_vals, field_name=None):
             if travel_matches:
                 # Use token_sort_ratio for better word-order matching
                 match, score, _ = process.extractOne(input_val, travel_matches, scorer=fuzz.token_sort_ratio)
-                if score >= 80:
+                if score >= 85:
                     return match
             # Fallback to partial_ratio for aliases
-            match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
-            if score >= 80:
+            match, score, _ = process.extractOne(input_val, travel_matches or possible_vals, scorer=fuzz.partial_ratio)
+            if score >= 85:
                 return match
+        # Special handling for subsistence
+        if input_val == "subsistence":
+            subsistence_matches = [val for val in possible_vals if "subsistence" in val.lower()]
+            if subsistence_matches:
+                return subsistence_matches[0]
+    
+    # Special handling for Location
+    if field_name == "Location" and input_val == "bangalore":
+        bangalore_matches = [val for val in possible_vals if "bangalore" in val.lower()]
+        if bangalore_matches:
+            return bangalore_matches[0]
     
     # General substring match with word overlap
     for val in possible_vals:
@@ -486,8 +497,11 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         # Handle From Period and To Period
         if key in ["From Period", "To Period"]:
             if clean_val in period_mapping:
-                validated[key] = period_mapping[clean_val]
-                notes[key] = f"Mapped '{clean_val}' to '{validated[key]}'"
+                validated[key] = f'"{period_mapping[clean_val]}"'
+                notes[key] = f"Mapped '{clean_val}' to '{period_mapping[clean_val]}'"
+            elif not clean_val or clean_val in ['from_period', 'to_period']:
+                validated[key] = f'"{current_date.strftime("%B %Y")}"'
+                notes[key] = f"Defaulted to current month: {current_date.strftime('%B %Y')}"
             else:
                 # Fallback to existing period normalization logic
                 try:
@@ -499,44 +513,46 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                     from_val_final, to_val_final = validate_period_order(from_p, to_p)
                     
                     if "Check: From > To" in to_val_final:
-                        validated["From Period"] = from_p
-                        validated["To Period"] = to_p + " invalid input"
+                        validated["From Period"] = f'"{from_p}"'
+                        validated["To Period"] = f'"{to_p} invalid input"'
                         notes["From Period"] = validated["From Period"]
                         notes["To Period"] = validated["To Period"]
                         warnings.append("To Period is earlier than From Period.")
                     else:
-                        validated["From Period"] = from_val_final
-                        validated["To Period"] = to_val_final
+                        validated["From Period"] = f'"{from_val_final}"'
+                        validated["To Period"] = f'"{to_val_final}"'
                         notes["From Period"] = from_val_final
                         notes["To Period"] = to_val_final
                 except Exception as e:
-                    validated[key] = clean_val or "Current month"
+                    validated[key] = f'"{current_date.strftime("%B %Y")}"'
                     notes[key] = f"Could not normalize period: {str(e)}"
                     warnings.append(f"Period normalization error: {str(e)}")
             continue
         
-        # Check if Account Name or Account Number is specified
-        account_name_val = intent_dict.get("Account Name", "")
-        account_number_val = intent_dict.get("Account Number", "")
-        account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
-        account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
-        account_is_placeholder = (
-            any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
-            account_name_clean in ['account_name', 'account name', ''] or
-            any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
-            account_number_clean in ['account_number', 'account number', '']
-        )
-        
-        if key == "Account Name" and account_is_placeholder and not account_number_clean:
-            validated[key] = '"*"'
-            notes[key] = "No account specified, using wildcard"
+        # Handle Department placeholder
+        if key == "Department" and value == "[department]":
+            validated[key] = '[department]'
+            notes[key] = "Preserved [department] placeholder"
             continue
         
+        # Handle Account Name, ensuring subsistence is treated correctly
+        if key == "Account Name":
+            if clean_val == "subsistence":
+                validated[key] = '"subsistence"'
+                notes[key] = "Exact match for subsistence as Account Name"
+                continue
+            if is_placeholder or clean_val in ['account_name', 'account name', '']:
+                validated[key] = '"*"'
+                notes[key] = "No account specified, using wildcard"
+                continue
+        
+        # Handle Budget category
         if key == "Budget category" and (is_placeholder or clean_val in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory']):
             validated[key] = '"Standard Budget"'
             notes[key] = "Default to Standard Budget"
             continue
         
+        # Preserve other placeholders
         if is_placeholder and (
             clean_val in placeholder_values or
             clean_val in [key.lower(), key.lower().replace(" ", "_"), key.lower() + "_name", key.lower() + "_number"]
@@ -545,9 +561,10 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             notes[key] = "Generic placeholder preserved"
             continue
         
-        if is_placeholder and key not in ["Account Name"]:
-            validated[key] = format_placeholder(value)
-            notes[key] = "Placeholder preserved"
+        # Handle Location, ensuring Bangalore is capitalized
+        if key == "Location" and clean_val == "bangalore":
+            validated[key] = '"Bangalore"'
+            notes[key] = "Corrected to Bangalore"
             continue
         
         canonical_col = unified_columns.get(key, key).lower()
@@ -559,33 +576,33 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         
         if key.lower() == "high/low":
             if original_query.lower().find("lowest") != -1:
-                validated[key] = "low"
+                validated[key] = '"low"'
                 notes[key] = "Set to low based on query"
             elif clean_val in ["high", "low"]:
-                validated[key] = clean_val
+                validated[key] = f'"{clean_val}"'
                 notes[key] = "Exact match"
             elif "high_low" in clean_val:
-                validated[key] = value
+                validated[key] = '"high/low"'
                 notes[key] = "Placeholder preserved"
             else:
-                validated[key] = "high"
+                validated[key] = '"high"'
                 notes[key] = "Default value used"
             continue
         
         if key.lower() == "limit of record":
             if clean_val.isdigit():
-                validated[key] = clean_val
+                validated[key] = f'"{clean_val}"'
                 notes[key] = "Valid integer"
             elif "limit" in clean_val:
-                validated[key] = clean_val
+                validated[key] = '"Limit of record"'
                 notes[key] = "Placeholder preserved"
             else:
-                validated[key] = "10"
+                validated[key] = '"10"'
                 notes[key] = "Default value used"
             continue
         
         if clean_val in ["", "-", "!", "not found"]:
-            validated[key] = '"Standard Budget"' if key == "Budget category" else ""
+            validated[key] = '"Standard Budget"' if key == "Budget category" else '""'
             notes[key] = "Default to Standard Budget" if key == "Budget category" else "Empty or already invalid"
             continue
         
@@ -594,10 +611,10 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             if mapped_col in netsuite_df.columns:
                 matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
                                 if v.strip().lower() == clean_val), clean_val)
-                validated[key] = matched
+                validated[key] = f'"{matched}"'
                 notes[key] = "Exact match"
             else:
-                validated[key] = clean_val
+                validated[key] = f'"{clean_val}"'
                 notes[key] = "Exact match (no column mapping)"
         else:
             partial = best_partial_match(clean_val, possible_values, key)
@@ -606,17 +623,17 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                 if mapped_col in netsuite_df.columns:
                     matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
                                     if v.strip().lower() == partial.strip().lower()), partial)
-                    validated[key] = matched
+                    validated[key] = f'"{matched}"'
                     notes[key] = "Partial match"
                 else:
-                    validated[key] = partial
+                    validated[key] = f'"{partial}"'
                     notes[key] = "Partial match (no column mapping)"
             else:
                 found = False
                 for other_col, other_vals in canonical_values.items():
                     if other_col != canonical_col and other_col != 'account name':
                         if clean_val in other_vals:
-                            validated[key] = clean_val
+                            validated[key] = f'"{clean_val}"'
                             notes[key] = f"Found in {other_col} column"
                             found = True
                             break
@@ -626,41 +643,15 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                             if mapped_col in netsuite_df.columns:
                                 matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
                                                 if v.strip().lower() == partial_other.strip().lower()), partial_other)
-                                validated[key] = matched
+                                validated[key] = f'"{matched}"'
                                 notes[key] = f"Partial match in {other_col} column"
                                 found = True
                                 break
                 if not found:
-                    if key in key_fields:
-                        retry_match = best_partial_match(clean_val, possible_values, key)
-                        if retry_match:
-                            mapped_col = column_mapping.get(canonical_col, canonical_col)
-                            if mapped_col in netsuite_df.columns:
-                                matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                                if v.strip().lower() == retry_match.strip().lower()), retry_match)
-                                validated[key] = matched
-                                notes[key] = "Retry partial match"
-                            else:
-                                validated[key] = retry_match
-                                notes[key] = "Retry partial match (no column mapping)"
-                        else:
-                            if key == "Budget category":
-                                validated[key] = '"Standard Budget"'
-                                notes[key] = "Default to Standard Budget"
-                            else:
-                                validated[key] = value if is_placeholder else clean_val
-                                notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched in any known column"
-                                if not is_placeholder:
-                                    warnings.append(f"'{clean_val}' in {key} not recognized in any column.")
-                    else:
-                        if key == "Budget category":
-                            validated[key] = '"Standard Budget"'
-                            notes[key] = "Default to Standard Budget"
-                        else:
-                            validated[key] = value if is_placeholder else clean_val
-                            notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched in any known column"
-                            if not is_placeholder:
-                                warnings.append(f"'{clean_val}' in {key} not recognized in any column.")
+                    validated[key] = value if is_placeholder else f'"{clean_val}"'
+                    notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched in any known column"
+                    if not is_placeholder:
+                        warnings.append(f"'{clean_val}' in {key} not recognized in any column.")
     
     smart_input = validated.copy()
     for lk in ["Limit of record", "high/low"]:
@@ -697,8 +688,8 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         "Budget category": 55,
         "Currency": 80,
         "Account type": 60,
-        "Account Number": 60,  # Adjusted to match Account Name
-        "Account Name": 60,    # Increased threshold
+        "Account Number": 60,
+        "Account Name": 60,
         "Customer Number": 75,
         "Customer Name": 60,
         "Vendor Number": 80,
@@ -725,11 +716,16 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         if not value:
             if field == "Budget category":
                 corrected_intent[field] = '"Standard Budget"'
-                continue
-            corrected_intent[field] = value
+            else:
+                corrected_intent[field] = '""'
             continue
         
         raw = re.sub(r'^[{\["]*|[}\]"]*$', '', str(value)).lower()
+        
+        # Preserve placeholders
+        if value in ['[department]', '[class]', '[location]'] or raw in placeholder_values:
+            corrected_intent[field] = value
+            continue
         
         if field == "Budget category" and (
             raw in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory'] or
@@ -738,21 +734,22 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
             corrected_intent[field] = '"Standard Budget"'
             continue
         
-        if raw in placeholder_values or raw in [
-            field.lower(), field.lower().replace(" ", "_"),
-            field.lower() + "_name", field.lower() + "_number"
-        ]:
+        if field == "Account Name" and value == '"*"':
             corrected_intent[field] = value
             continue
         
-        if field == "Account Name" and value == '"*"':
-            corrected_intent[field] = value
+        if field == "Account Name" and raw == "subsistence":
+            corrected_intent[field] = '"subsistence"'
+            continue
+        
+        if field == "Location" and raw == "bangalore":
+            corrected_intent[field] = '"Bangalore"'
             continue
             
         canonical_col = unified_columns.get(field, field).lower()
         possible_values = canonical_values.get(canonical_col, [])
         if field == "Account Number":
-            canonical_col = 'account name'  # Always match Account Number against Account Name column
+            canonical_col = 'account name'
             possible_values = canonical_values.get(canonical_col, [])
             
         if not possible_values:
@@ -781,28 +778,12 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
                 else:
                     original_case = match
             else:
-                if field == "Budget category":
-                    corrected_intent[field] = '"Standard Budget"'
-                    continue
-                if field in key_fields:
-                    retry_match = best_partial_match(raw, possible_values, field)
-                    if retry_match:
-                        mapped_col = column_mapping.get(canonical_col, canonical_col)
-                        if mapped_col in netsuite_df.columns:
-                            original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                                 if v.strip().lower() == retry_match), retry_match)
-                        else:
-                            original_case = retry_match
-                    else:
-                        corrected_intent[field] = value
-                        continue
-                else:
-                    corrected_intent[field] = value
-                    continue
+                corrected_intent[field] = value
+                continue
         
         if field in ["Customer Number", "Customer Name", "Account Name",
                      "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
-            formatted = f'{{"{original_case}"}}'
+            formatted = f'"{original_case}"'
         elif field in ["Subsidiary", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
             formatted = f'"{original_case}"'
         else:
