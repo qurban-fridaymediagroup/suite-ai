@@ -30,6 +30,8 @@ def normalize_prompt(text, threshold=85):
         'acc': 'account',
         'acct': 'account',
         'accnt': 'account',
+        'a / c': 'account',
+        'a/c': 'account',
         'locati': 'location',
         'loc': 'location',
         'subs': 'subsidiary',
@@ -221,7 +223,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             'department', 'location', 'subsidiary', 'class', 'limit of records',
             'from period', 'to period', 'from_period', 'to_period', 'vendor name',
             'customer number', 'customer name', 'vendor number', 'account number',
-            'account name', 'budget category', 'table_name', 'grouping and filtering',
+            'account name', 'budget category', 'budget','table_name', 'grouping and filtering',
             'grouping_and_filtering', '', 'none', 'null', 'placeholder'
         ]
 
