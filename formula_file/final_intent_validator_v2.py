@@ -10,7 +10,8 @@ from rapidfuzz import process, fuzz
 from formula_file.period_utils import get_period_range, normalize_period_string, validate_period_order
 from formula_file.smart_intent_correction import smart_intent_correction_restricted
 from formula_file.constants import unified_columns
-
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 # Load NetSuite data
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, "Netsuite info all final data.csv")
@@ -228,25 +229,28 @@ def format_formula_with_intent(formula_type, intent_dict):
         table_name = intent_dict.get("TABLE_NAME", "")
         return f'SUITEREC("{table_name}")'
     
+    # Get current month and year
+    current_month_year = datetime.now().strftime("%B %Y")
+    
     params = []
     for field in template:
-        value = intent_dict.get(field, "")
+        value = intent_dict.get(field, "").strip()
         
         # Handle Account Name/Number missing case
         if field in ["Account Name", "Account Number"]:
-            if not value.strip() or value.strip() in ['', 'none', 'null', 'placeholder', '[account_name]']:
+            if not value or value.lower() in ['', 'none', 'null', 'placeholder']:
                 params.append('"*"')
                 continue
-            
+        
+        # Default to current month and year if From Period or To Period is missing
+        if field in ["From Period", "To Period"] and not value:
+            value = current_month_year
+        
         if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
             params.append(f'"{value}"')
-        elif field in ["Customer Number", "Customer Name", "Account Name", "account_name"
+        elif field in ["Customer Number", "Customer Name", "Account Name", 
                        "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
-            # Handle Class field separately to avoid incorrect formatting
-            if field == "Class" and not value.strip():
-                params.append("")
-            else:
-                params.append(f'{{"{value}"}}')
+            params.append(f'{{"{value}"}}')
         else:
             params.append(f'"{value}"')
     
@@ -392,15 +396,15 @@ def best_partial_match(input_val, possible_vals, field_name=None):
     
     # Field-specific thresholds
     field_thresholds = {
-        "Subsidiary": 60,
+        "Subsidiary": 80,
         "Classification": 60,
         "Class": 60,
         "Department": 60,
         "Location": 70,
         "Budget category": 60,
         "Currency": 80,
-        "Account Number": 60,  # Adjusted to match Account Name
-        "Account Name": 60,    # Increased to avoid unrelated matches
+        "Account Number": 85,  # Adjusted to match Account Name
+        "Account Name": 85,    # Increased to avoid unrelated matches
         "Customer Number": 75,
         "Customer Name": 60,
         "Vendor Number": 80,
@@ -423,11 +427,11 @@ def best_partial_match(input_val, possible_vals, field_name=None):
             if travel_matches:
                 # Use token_sort_ratio for better word-order matching
                 match, score, _ = process.extractOne(input_val, travel_matches, scorer=fuzz.token_sort_ratio)
-                if score >= 65:
+                if score >= 80:
                     return match
             # Fallback to partial_ratio for aliases
             match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
-            if score >= 65:
+            if score >= 80:
                 return match
     
     # General substring match with word overlap
@@ -453,13 +457,19 @@ def best_partial_match(input_val, possible_vals, field_name=None):
     
     return None
 
-# Main validation function
 def validate_intent_fields_v2(intent_dict, original_query=""):
     validated = {}
     notes = {}
     warnings = []
     placeholder_patterns = [r'\[.*?\]', r'\{.*?\}', r'^\{\".*?\"\}$']
     
+    # Define period mapping
+    current_date = datetime(2025, 5, 12)  # Fixed date for consistency
+    period_mapping = {
+        "current month": current_date.strftime("%B %Y"),  # May 2025
+        "last month": (current_date - relativedelta(months=1)).strftime("%B %Y")  # April 2025
+    }
+
     # Define strict placeholder values to preserve
     placeholder_values = [
         'subsidiary', 'classification', 'class', 'department', 'location',
@@ -468,59 +478,54 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         'from period', 'to period', 'high/low', 'limit of record', 'table_name'
     ]
     
-    # Handle periods
-    from_val = intent_dict.get("From Period", "")
-    to_val = intent_dict.get("To Period", "")
-    from_val_clean = re.sub(r'[{}\"]', '', str(from_val)).strip()
-    to_val_clean = re.sub(r'[{}\"]', '', str(to_val)).strip()
-    
-    try:
-        from_p, to_p = get_period_range(from_val_clean, to_val_clean or from_val_clean)
-        from_val_final, to_val_final = validate_period_order(from_p, to_p)
-        
-        if "Check: From > To" in to_val_final:
-            validated["From Period"] = from_p
-            validated["To Period"] = to_p + " invalid input"
-            notes["From Period"] = validated["From Period"]
-            notes["To Period"] = validated["To Period"]
-            warnings.append("To Period is earlier than From Period.")
-        else:
-            validated["From Period"] = from_val_final
-            validated["To Period"] = to_val_final
-            notes["From Period"] = from_val_final
-            notes["To Period"] = to_val_final
-    except Exception as e:
-        validated["From Period"] = from_val_clean
-        validated["To Period"] = to_val_clean or from_val_clean
-        notes["From Period"] = "Could not normalize period"
-        notes["To Period"] = "Could not normalize period"
-        warnings.append(f"Period normalization error: {str(e)}")
-    
-    # Ensure matching for all formula fields
-    key_fields = [
-        "Location", "Account Name", "Budget category",
-        "Customer Name", "Customer Number"
-    ]
-    
-    # Check if Account Name or Account Number is specified
-    account_name_val = intent_dict.get("Account Name", "")
-    account_number_val = intent_dict.get("Account Number", "")
-    account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
-    account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
-    account_is_placeholder = (
-        any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
-        account_name_clean in ['account_name', 'account name', ''] or
-        any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
-        account_number_clean in ['account_number', 'account number', '']
-    )
-    
     # Handle other fields
     for key, value in intent_dict.items():
-        if key in ["From Period", "To Period"]:
-            continue
-        
         is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
         clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
+        
+        # Handle From Period and To Period
+        if key in ["From Period", "To Period"]:
+            if clean_val in period_mapping:
+                validated[key] = period_mapping[clean_val]
+                notes[key] = f"Mapped '{clean_val}' to '{validated[key]}'"
+            else:
+                # Fallback to existing period normalization logic
+                try:
+                    from_val = intent_dict.get("From Period", "")
+                    to_val = intent_dict.get("To Period", "")
+                    from_val_clean = re.sub(r'[{}\"]', '', str(from_val)).strip()
+                    to_val_clean = re.sub(r'[{}\"]', '', str(to_val)).strip()
+                    from_p, to_p = get_period_range(from_val_clean, to_val_clean or from_val_clean)
+                    from_val_final, to_val_final = validate_period_order(from_p, to_p)
+                    
+                    if "Check: From > To" in to_val_final:
+                        validated["From Period"] = from_p
+                        validated["To Period"] = to_p + " invalid input"
+                        notes["From Period"] = validated["From Period"]
+                        notes["To Period"] = validated["To Period"]
+                        warnings.append("To Period is earlier than From Period.")
+                    else:
+                        validated["From Period"] = from_val_final
+                        validated["To Period"] = to_val_final
+                        notes["From Period"] = from_val_final
+                        notes["To Period"] = to_val_final
+                except Exception as e:
+                    validated[key] = clean_val or "Current month"
+                    notes[key] = f"Could not normalize period: {str(e)}"
+                    warnings.append(f"Period normalization error: {str(e)}")
+            continue
+        
+        # Check if Account Name or Account Number is specified
+        account_name_val = intent_dict.get("Account Name", "")
+        account_number_val = intent_dict.get("Account Number", "")
+        account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
+        account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
+        account_is_placeholder = (
+            any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
+            account_name_clean in ['account_name', 'account name', ''] or
+            any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
+            account_number_clean in ['account_number', 'account number', '']
+        )
         
         if key == "Account Name" and account_is_placeholder and not account_number_clean:
             validated[key] = '"*"'
