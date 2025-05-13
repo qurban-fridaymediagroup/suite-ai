@@ -536,6 +536,11 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             validated[key] = '"Standard Budget"'
             notes[key] = "Default to Standard Budget"
             continue
+
+        if key == "Subsiadiary" and (is_placeholder or clean_val in ['your_subsidiary', 'subsidiary']):
+            validated[key] = '"Friday Media Group (Consolidated)"'
+            notes[key] = "Default to Friday Media Group (Consolidated)"
+            continue
         
         if is_placeholder and (
             clean_val in placeholder_values or
@@ -751,7 +756,7 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
             
         canonical_col = unified_columns.get(field, field).lower()
         possible_values = canonical_values.get(canonical_col, [])
-        if field == "Account Number":
+        if field == "Account Number" or field == "account number" or field == "Account" or field == "ACCOUNT" or field == "account" or field == "Account Name" or field == "ACCOUNT NAME" or field == "account name":
             canonical_col = 'account name'  # Always match Account Number against Account Name column
             possible_values = canonical_values.get(canonical_col, [])
             
