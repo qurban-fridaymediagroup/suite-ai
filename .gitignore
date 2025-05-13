@@ -1,7 +1,6 @@
 venv
 .env
 .idea
-.all_column_embeddings.pkl
 __pycache__
 .DS_Store
 *.pyc
@@ -12,3 +11,4 @@ __pycache__
 *.iml
 *.ipynb_checkpoints
 *.pytest_cache
+*.pkl
