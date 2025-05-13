@@ -5,7 +5,10 @@ import re
 from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
-from rapidfuzz import process, fuzz
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import pickle
+import numpy as np
 from datetime import datetime
 
 # Load environment variables
@@ -13,16 +16,23 @@ load_dotenv()
 
 # Get API key and model from environment variables
 api_key = os.getenv("OPENAI_API_KEY")
-model = os.getenv("OPENAI_MODEL")  
+model = os.getenv("OPENAI_MODEL")
 
-def normalize_prompt(text, threshold=85):
+# Load embeddings (same as final_intent_validator_v2.py)
+embeddings_path = r"C:\Users\abc\Downloads\suite-ai\formula_file\all_column_embeddings.pkl"
+with open(embeddings_path, "rb") as f:
+    column_embeddings = pickle.load(f)
+
+# Initialize SentenceTransformer model
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def normalize_prompt(text, threshold=0.75):
     """
     Normalize user prompts by expanding abbreviations and standardizing business terms.
     This function:
     1. Expands common abbreviations (acc -> account, loc -> location)
-    2. Normalizes business terms to their standard form using the normalization dictionary
-    3. Uses fuzzy matching for misspelled terms
-    4. Preserves common words, numbers, and other non-business terms
+    2. Normalizes business terms to their standard form using semantic similarity
+    3. Preserves common words, numbers, and other non-business terms
     """
     text = text.lower().strip()
 
@@ -47,10 +57,16 @@ def normalize_prompt(text, threshold=85):
         'vendor': 'vendor name'
     }
 
+    # Load normalization dictionary keys
+    dictionary_keys = list(normalisation_dict.keys())
+    # Check if embeddings for normalisation_dict exist, else generate
+    dictionary_embeddings = column_embeddings.get('NormalisationDict', None)
+    if dictionary_embeddings is None:
+        dictionary_embeddings = sentence_model.encode(dictionary_keys, convert_to_tensor=False)
+
     # Split text into words, preserving spaces and special characters
     words = re.findall(r'\b\w+\b|[^\w\s]', text)
     result = []
-    dictionary_keys = list(normalisation_dict.keys())
 
     # Process words one by one
     i = 0
@@ -101,12 +117,12 @@ def normalize_prompt(text, threshold=85):
             else:
                 result.append(normalisation_dict[word])
         else:
-            # Only apply fuzzy matching to potential business terms
+            # Only apply semantic matching to potential business terms
             # Skip common words, numbers, months, etc.
             common_words = {
                 'get', 'show', 'me', 'need', 'for', 'in', 'and', 'the', 'of', 'to', 'from',
                 'report', 'data', 'info', 'details', 'forecast', 'standard', 'office', 'supplies',
-                'top'  # Added 'top' to preserve it
+                'top'
             }
             months = {
                 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
@@ -118,22 +134,27 @@ def normalize_prompt(text, threshold=85):
                 len(word) <= 2 or any(c.isdigit() for c in word)):
                 result.append(word)
             else:
-                # Try fuzzy matching for potential business terms
-                match, score, _ = process.extractOne(word, dictionary_keys, scorer=fuzz.WRatio)
-                if score >= threshold:
-                    # Special case for fuzzy matching "budget"
+                # Semantic similarity matching
+                query_embedding = sentence_model.encode([word], convert_to_tensor=False)
+                similarities = cosine_similarity(query_embedding, dictionary_embeddings)[0]
+                top_idx = np.argmax(similarities)
+                top_similarity = similarities[top_idx]
+
+                if top_similarity >= threshold:
+                    match = dictionary_keys[top_idx]
+                    # Special case for "budget"
                     if match.lower() == "budget" or "budget" in match.lower():
                         result.append("Budget")
-                    # Special case for fuzzy matching "subsistence"
+                    # Special case for "subsistence"
                     elif match.lower() == "subsistence" or word.lower() == "subsistence":
                         result.append("Account_Name subsistence")
-                    # Special case for fuzzy matching "subsidiary"
+                    # Special case for "subsidiary" vs "subsistence"
                     elif match.lower() == "subsidiary" and word.lower() == "subsistence":
                         result.append("Account_Name subsistence")
                     else:
                         result.append(normalisation_dict[match])
                 else:
-                    # Special case for "subsistence" when no match is found
+                    # Special case for "subsistence" when no match
                     if word.lower() == "subsistence":
                         result.append("Account_Name subsistence")
                     else:
@@ -154,7 +175,7 @@ def parse_formula_to_intent(formula_str: str):
     if not match:
         return {"error": "Invalid formula format."}
 
-    formula_type = match.group(1).upper()  # ✅ Convert formula name to UPPERCASE here
+    formula_type = match.group(1).upper()
     raw_params = match.group(2)
     params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}]*\})', raw_params)]
 

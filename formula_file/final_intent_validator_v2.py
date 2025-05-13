@@ -4,7 +4,10 @@ from datetime import datetime
 import re
 import calendar
 import os
-from rapidfuzz import process, fuzz
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import pickle
+import numpy as np
 
 # Import custom modules
 from formula_file.period_utils import get_period_range, normalize_period_string, validate_period_order
@@ -12,10 +15,19 @@ from formula_file.smart_intent_correction import smart_intent_correction_restric
 from formula_file.constants import unified_columns
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+
 # Load NetSuite data
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, "Netsuite info all final data.csv")
 netsuite_df = pd.read_csv(csv_path, encoding="ISO-8859-1")
+
+# Load embeddings
+embeddings_path = r"C:\Users\abc\Downloads\suite-ai\formula_file\all_column_embeddings.pkl"
+with open(embeddings_path, "rb") as f:
+    column_embeddings = pickle.load(f)
+
+# Initialize model for query encoding
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Initialize canonical values for all columns in the CSV
 canonical_values = {col.lower(): set() for col in netsuite_df.columns}
@@ -46,20 +58,19 @@ column_variations = {
     'Class': ['Class', 'Classes', 'Clas']
 }
 
-# Fuzzy match column names
+# Match column names (without rapidfuzz)
 column_mapping = {}
 csv_columns = list(netsuite_df.columns)
+csv_columns_lower = [col.lower() for col in csv_columns]
 for expected_col, variations in column_variations.items():
-    best_match = None
-    best_score = 0
+    matched = False
     for variation in variations:
-        match, score, _ = process.extractOne(variation.lower(), csv_columns, scorer=fuzz.WRatio)
-        if score > best_score and score >= 80:
-            best_match = match
-            best_score = score
-    if best_match:
-        column_mapping[expected_col.lower()] = best_match
-    else:
+        if variation.lower() in csv_columns_lower:
+            idx = csv_columns_lower.index(variation.lower())
+            column_mapping[expected_col.lower()] = csv_columns[idx]
+            matched = True
+            break
+    if not matched:
         column_mapping[expected_col.lower()] = expected_col  # Fallback to expected name
 
 # Extract canonical values with updated column mappings
@@ -187,7 +198,7 @@ def get_formula_template(formula_type, intent_dict):
         vendor_name = intent_dict.get("Vendor Name", "")
         account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
         
-        has_vendor_number = has_valid_match("Vendor Number", vendor_number)
+        has_vendor_number = has_valid_match("Vendor Number", vendor_name)
         has_vendor_name = has_valid_match("Vendor Name", vendor_name)
         has_account_name = has_valid_match("Account Name", account_name)
         
@@ -388,72 +399,83 @@ def format_placeholder(value):
 
 # Utility functions
 def best_partial_match(input_val, possible_vals, field_name=None):
-    """Find the best partial match for a value using field-specific thresholds."""
+    """Find the best partial match for a value using semantic search with precomputed embeddings."""
     if not input_val or not possible_vals:
         return None
     
     input_val = input_val.strip().lower()
     
-    # Field-specific thresholds
-    field_thresholds = {
-        "Subsidiary": 80,
-        "Classification": 80,
-        "Class": 80,
-        "Department": 80,
-        "Location": 80,
-        "Budget category": 80,
-        "Currency": 80,
-        "Account Number": 85,  
-        "Account Name": 85,   
-        "Customer Number": 85,
-        "Customer Name": 85,
-        "Vendor Number": 85,
-        "Vendor Name": 85
+    # Map field_name to embedding column key
+    field_to_embedding_key = {
+        "Subsidiary": "Subsidiary",
+        "Classification": "Classification/Brand/Cost Center/Class",
+        "Class": "Classification/Brand/Cost Center/Class",
+        "Department": "Department",
+        "Location": "Location",
+        "Budget category": "BudgetCategory",
+        "Currency": "Currency",
+        "Account Number": "Account Name",  # Match against Account Name embeddings
+        "Account Name": "Account Name",
+        "Customer Number": "Customer",
+        "Customer Name": "Customer",
+        "Vendor Number": "Vendor",
+        "Vendor Name": "Vendor"
     }
     
-    threshold = field_thresholds.get(field_name, 85)
+    embedding_key = field_to_embedding_key.get(field_name, field_name)
     
-    # First try exact match
-    for val in possible_vals:
+    if embedding_key not in column_embeddings:
+        return None
+    
+    # Get embeddings and corresponding values
+    embeddings = column_embeddings[embedding_key]
+    column_values = netsuite_df[embedding_key].fillna("").astype(str).tolist()
+    
+    # Check for exact match first
+    for idx, val in enumerate(column_values):
         if input_val == val.lower():
             return val
     
-    # Enhanced matching for Account Name
+    # Semantic search
+    query_embedding = model.encode([input_val], convert_to_tensor=False)
+    similarities = cosine_similarity(query_embedding, embeddings)[0]
+    
+    # Get top match
+    top_idx = np.argmax(similarities)
+    top_similarity = similarities[top_idx]
+    
+    # Field-specific thresholds
+    field_thresholds = {
+        "Subsidiary": 0.7,
+        "Classification": 0.75,
+        "Class": 0.75,
+        "Department": 0.75,
+        "Location": 0.8,
+        "Budget category": 0.75,
+        "Currency": 0.8,
+        "Account Number": 0.8,
+        "Account Name": 0.8,
+        "Customer Number": 0.75,
+        "Customer Name": 0.8,
+        "Vendor Number": 0.8,
+        "Vendor Name": 0.8
+    }
+    
+    threshold = field_thresholds.get(field_name, 0.7)
+    
+    if top_similarity >= threshold:
+        return column_values[top_idx]
+    
+    # Handle travel aliases for Account Name
     if field_name in ["Account Name", "Account Number"]:
         travel_aliases = ["travel", "trav", "expense", "exp"]
         if input_val in travel_aliases:
-            # Prioritize matches containing "travel"
-            travel_matches = [val for val in possible_vals if "travel" in val.lower()]
-            if travel_matches:
-                # Use token_sort_ratio for better word-order matching
-                match, score, _ = process.extractOne(input_val, travel_matches, scorer=fuzz.token_sort_ratio)
-                if score >= 85:
-                    return match
-            # Fallback to partial_ratio for aliases
-            match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.partial_ratio)
-            if score >= 85:
-                return match
-    
-    # General substring match with word overlap
-    for val in possible_vals:
-        val_lower = val.lower()
-        input_words = input_val.split()
-        val_words = val_lower.split()
-        if (input_val in val_lower or val_lower in input_val or 
-            input_val[:3] in val_lower or val_lower[:3] in input_val or
-            any(word in val_words for word in input_words if len(word) > 2)):
-            return val
-    
-    # Use token_sort_ratio for fields to handle word order
-    if field_name in ["Location", "Account Name", "Account Number", "Budget category", "Customer Name", "Customer Number"]:
-        match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.token_sort_ratio)
-        if score >= threshold - 5:
-            return match
-    
-    # Fuzzy matching with rapidfuzz WRatio
-    match, score, _ = process.extractOne(input_val, possible_vals, scorer=fuzz.WRatio)
-    if score >= threshold:
-        return match
+            travel_indices = [i for i, val in enumerate(column_values) if "travel" in val.lower()]
+            if travel_indices:
+                travel_similarities = similarities[travel_indices]
+                top_travel_idx = travel_indices[np.argmax(travel_similarities)]
+                if similarities[top_travel_idx] >= 0.75:
+                    return column_values[top_travel_idx]
     
     return None
 
