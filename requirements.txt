@@ -3,3 +3,7 @@ openai
 python-dotenv
 fuzzywuzzy
 python-Levenshtein
+sentence-transformers
+scikit-learn
+numpy
+pandas
