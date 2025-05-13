@@ -11,5 +11,5 @@ __pycache__
 *.iml
 *.ipynb_checkpoints
 *.pytest_cache
-*.pkl
-.formula_file/all_column_embeddings.pkl
+.pkl
+formula_file/all_column_embeddings.pkl
