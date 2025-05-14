@@ -18,7 +18,6 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 model = os.getenv("OPENAI_MODEL")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-
 # Initialize Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "suiteai-index"
