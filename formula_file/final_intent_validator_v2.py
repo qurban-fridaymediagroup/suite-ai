@@ -236,8 +236,9 @@ def format_formula_with_intent(formula_type, intent_dict):
             return f'SUITEREC("{table_name}")'
 
         # Get current month and year
-        current_month_year = datetime.now().strftime("%B %Y")
-
+        # Format current month in 3-letter abbreviation (e.g. "Apr 2025")
+        current_month_year = datetime.now().strftime("%b %Y") 
+        
         params = []
         for field in template:
             value = intent_dict.get(field, "").strip()
@@ -432,7 +433,7 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         current_date = datetime(2025, 5, 12)  # Fixed date for consistency
         period_mapping = {
             "current month": current_date.strftime("%B %Y"),  # May 2025
-            "last month": (current_date - relativedelta(months=1)).strftime("%B %Y")  # April 2025
+            "last month": (current_date - relativedelta(months=1)).strftime("%b %Y")  # April 2025
         }
 
         # Define strict placeholder values to preserve
@@ -589,7 +590,6 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                         if not is_placeholder:
                             warnings.append(f"'{clean_val}' in {key} not recognized.")
 
-        print("Validated Intent:", validated)
         smart_input = validated.copy()
         for lk in ["Limit of record", "high/low"]:
             if lk in smart_input:

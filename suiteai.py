@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
 from rapidfuzz import process, fuzz
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -151,6 +151,7 @@ def normalize_prompt(text, threshold=85):
 
 def parse_formula_to_intent(formula_str: str):
     match = re.match(r'(\w+)\((.*)\)', formula_str)
+    
     if not match:
         return {"error": "Invalid formula format."}
 
@@ -161,6 +162,10 @@ def parse_formula_to_intent(formula_str: str):
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
     
+    print("\n")
+    print("formula_type:", formula_type)
+    print("params:", params)
+    print("\n")
     # Create the intent dictionary
     intent_dict = dict(zip(formula_mapping[formula_type], params))
     
@@ -287,7 +292,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
         )
 
         # Handle Subsidiary
-        if field == "Subsidiary":
+        if field == "Subsidiary" or field == "your_subsidiary":
             if is_placeholder:
                 formula_str += '"Friday Media Group (Consolidated)"'
             else:
@@ -300,16 +305,25 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
         elif field in ["From Period", "To Period"]:
             if is_placeholder or (isinstance(value, str) and "current month" in value.lower()):
                 # Get current month and year
-                current_month_year = datetime.now().strftime("%B %Y")
+                current_date = datetime.now()
+                current_month_year = current_date.strftime("%b %Y")
                 formula_str += f'"{current_month_year}"'
+            elif isinstance(value, str) and "last month" in value.lower():
+                # Get last month and year
+                current_date = datetime.now()
+                last_month = current_date.replace(day=1) - timedelta(days=1)
+                last_month_year = last_month.strftime("%b %Y")
+                formula_str += f'"{last_month_year}"'
             else:
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
                 if value:
-                    formula_str += f'"{value}"'
+                    formula_str += f'"{value.capitalize()}"'  # Ensure proper capitalization
                 else:
                     # Get current month and year as default
-                    current_month_year = datetime.now().strftime("%B %Y")
+                    current_month_year = datetime.now().strftime("%b %Y")
                     formula_str += f'"{current_month_year}"'
+
+        
         # Handle Account Name with hard-coded value
         elif field == "Account Name":
             if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
@@ -517,7 +531,7 @@ if query and st.session_state.has_valid_api_key:
 
         formula = re.sub(r'\[account\]|account', '[*]', formula, flags=re.IGNORECASE)
         parsed = parse_formula_to_intent(formula)
-        
+
         # Check if there was an error in parsing
         if "error" in parsed:
             # If there's a mismatch in formula parameters, just display the GPT response
@@ -545,7 +559,6 @@ if query and st.session_state.has_valid_api_key:
                 if parsed["formula_type"] != "SUITEREC":
                     validated['validated_intent']['Account Name'] = '"*"'
 
-            print(validated)
             # Generate the final formula
             regenerated_formula = generate_formula_from_intent(
                 parsed["formula_type"],
