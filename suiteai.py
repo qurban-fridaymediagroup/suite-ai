@@ -517,7 +517,7 @@ if query and st.session_state.has_valid_api_key:
 
         formula = re.sub(r'\[account\]|account', '[*]', formula, flags=re.IGNORECASE)
         parsed = parse_formula_to_intent(formula)
-        print(parsed)
+        
         # Check if there was an error in parsing
         if "error" in parsed:
             # If there's a mismatch in formula parameters, just display the GPT response
@@ -541,12 +541,17 @@ if query and st.session_state.has_valid_api_key:
             if 'Account Name' in validated['validated_intent'] and (
                 validated['validated_intent']['Account Name'].lower() in ['[account_name]', 'account_name', '[*]']
             ):
-                validated['validated_intent']['Account Name'] = '"*"'
+            
+                if parsed["formula_type"] != "SUITEREC":
+                    validated['validated_intent']['Account Name'] = '"*"'
+
+            print(validated)
+            # Generate the final formula
             regenerated_formula = generate_formula_from_intent(
                 parsed["formula_type"],
                 validated["validated_intent"],
                 formula_mapping,
-                has_account_name_placeholder=parsed["has_account_name_placeholder"]
+                has_account_name_placeholder=bool(parsed.get("has_account_name_placeholder", False))
             )
 
             if content:

@@ -4,30 +4,22 @@ from datetime import datetime
 import re
 import calendar
 import os
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import pickle
-import numpy as np
-
-# Import custom modules
-from formula_file.period_utils import get_period_range, normalize_period_string, validate_period_order
-from formula_file.smart_intent_correction import smart_intent_correction_restricted
-from formula_file.constants import unified_columns
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+# Import custom modules (assuming they don't rely on removed dependencies)
+from formula_file.period_utils import get_period_range, normalize_period_string, validate_period_order
+from formula_file.smart_intent_correction import smart_intent_correction_restricted
+from formula_file.constants import unified_columns
+
 # Load NetSuite data
-current_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(current_dir, "Netsuite info all final data.csv")
-netsuite_df = pd.read_csv(csv_path, encoding="ISO-8859-1")
-
-# Load embeddings
-embeddings_path = r"/Users/apple/Python/streamlit-suite-ai/formula_file/all_column_embeddings.pkl"
-with open(embeddings_path, "rb") as f:
-    column_embeddings = pickle.load(f)
-
-# Initialize model for query encoding
-model = SentenceTransformer('all-MiniLM-L6-v2')
+try:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(current_dir, "Netsuite info all final data.csv")
+    netsuite_df = pd.read_csv(csv_path, encoding="ISO-8859-1")
+except Exception as e:
+    print(f"Error loading NetSuite data: {e}")
+    netsuite_df = pd.DataFrame()
 
 # Initialize canonical values for all columns in the CSV
 canonical_values = {col.lower(): set() for col in netsuite_df.columns}
@@ -109,7 +101,6 @@ field_format_map = {
     "Subsidiary": "Subsidiary",
     "Budget category": '"Budget category"',
     "Account Number": '{"Account Number"}',
-    "Account Number": '{"account_name"}',
     "Account Name": '{"Account Name"}',
     "From Period": '"From Period"',
     "To Period": '"To Period"',
@@ -157,115 +148,122 @@ def get_formula_template(formula_type, intent_dict):
     """
     Determine the correct formula template based on formula type and intent fields
     """
-    if formula_type == "SUITEREC":
-        return formula_mapping["SUITEREC"]
+    try:
+        if formula_type == "SUITEREC":
+            return formula_mapping["SUITEREC"]
 
-    def has_valid_match(field, value):
-        if not value or not isinstance(value, str):
-            return False
-        clean_val = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
-        if clean_val in ['none', '', 'null', 'placeholder']:
-            return False
-        # Always match against Account Name column for both Account Name and Account Number
-        possible_values = canonical_values.get('account name', [])
-        if not possible_values:
-            return False
-        match = best_partial_match(clean_val, possible_values, 'Account Name')
-        return match is not None
+        def has_valid_match(field, value):
+            if not value or not isinstance(value, str):
+                return False
+            clean_val = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
+            if clean_val in ['none', '', 'null', 'placeholder']:
+                return False
+            possible_values = canonical_values.get('account name', [])
+            if not possible_values:
+                return False
+            match = best_partial_match(clean_val, possible_values, 'Account Name')
+            return match is not None
 
-    if formula_type == "SUITECUS":
-        customer_number = intent_dict.get("Customer Number", "")
-        customer_name = intent_dict.get("Customer Name", "")
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+        if formula_type == "SUITECUS":
+            customer_number = intent_dict.get("Customer Number", "")
+            customer_name = intent_dict.get("Customer Name", "")
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
 
-        has_customer_number = has_valid_match("Customer Number", customer_number)
-        has_customer_name = has_valid_match("Customer Name", customer_name)
-        has_account_name = has_valid_match("Account Name", account_name)
+            has_customer_number = has_valid_match("Customer Number", customer_number)
+            has_customer_name = has_valid_match("Customer Name", customer_name)
+            has_account_name = has_valid_match("Account Name", account_name)
 
-        if has_customer_number and has_account_name:
+            if has_customer_number and has_account_name:
+                return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
+            elif has_customer_name and has_account_name:
+                return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME"]
             return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
-        elif has_customer_name and has_account_name:
-            return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME"]
-        return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEGEN":
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-        has_account_name = has_valid_match("Account Name", account_name)
-        return extended_formula_mapping["SUITEGEN_ACCOUNT_NAME"]
+        elif formula_type == "SUITEGEN":
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+            has_account_name = has_valid_match("Account Name", account_name)
+            return extended_formula_mapping["SUITEGEN_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEVEN":
-        vendor_number = intent_dict.get("Vendor Number", "")
-        vendor_name = intent_dict.get("Vendor Name", "")
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+        elif formula_type == "SUITEVEN":
+            vendor_number = intent_dict.get("Vendor Number", "")
+            vendor_name = intent_dict.get("Vendor Name", "")
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
 
-        has_vendor_number = has_valid_match("Vendor Number", vendor_name)
-        has_vendor_name = has_valid_match("Vendor Name", vendor_name)
-        has_account_name = has_valid_match("Account Name", account_name)
+            has_vendor_number = has_valid_match("Vendor Number", vendor_name)
+            has_vendor_name = has_valid_match("Vendor Name", vendor_name)
+            has_account_name = has_valid_match("Account Name", account_name)
 
-        if has_vendor_name and has_account_name:
+            if has_vendor_name and has_account_name:
+                return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
+            elif has_vendor_number and has_account_name:
+                return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME"]
             return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
-        elif has_vendor_number and has_account_name:
-            return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME"]
-        return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEBUD":
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-        has_account_name = has_valid_match("Account Name", account_name)
-        return extended_formula_mapping["SUITEBUD_ACCOUNT_NAME"]
+        elif formula_type == "SUITEBUD":
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+            has_account_name = has_valid_match("Account Name", account_name)
+            return extended_formula_mapping["SUITEBUD_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEGENREP":
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-        has_account_name = has_valid_match("Account Name", account_name)
-        return extended_formula_mapping["SUITEGENREP_ACCOUNT_NAME"]
+        elif formula_type == "SUITEGENREP":
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+            has_account_name = has_valid_match("Account Name", account_name)
+            return extended_formula_mapping["SUITEGENREP_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEBUDREP":
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-        has_account_name = has_valid_match("Account Name", account_name)
-        return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NAME"]
+        elif formula_type == "SUITEBUDREP":
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+            has_account_name = has_valid_match("Account Name", account_name)
+            return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NAME"]
 
-    elif formula_type == "SUITEVAR":
-        account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-        has_account_name = has_valid_match("Account Name", account_name)
-        return extended_formula_mapping["SUITEVAR_ACCOUNT_NAME"]
+        elif formula_type == "SUITEVAR":
+            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
+            has_account_name = has_valid_match("Account Name", account_name)
+            return extended_formula_mapping["SUITEVAR_ACCOUNT_NAME"]
 
-    return formula_mapping.get(formula_type, [])
+        return formula_mapping.get(formula_type, [])
+    except Exception as e:
+        print(f"Error in get_formula_template: {e}")
+        return []
 
 def format_formula_with_intent(formula_type, intent_dict):
     """
     Format a formula string based on formula type and intent dictionary
     """
-    template = get_formula_template(formula_type, intent_dict)
+    try:
+        template = get_formula_template(formula_type, intent_dict)
 
-    if formula_type == "SUITEREC":
-        table_name = intent_dict.get("TABLE_NAME", "")
-        return f'SUITEREC("{table_name}")'
+        if formula_type == "SUITEREC":
+            table_name = intent_dict.get("TABLE_NAME", "")
+            return f'SUITEREC("{table_name}")'
 
-    # Get current month and year
-    current_month_year = datetime.now().strftime("%B %Y")
+        # Get current month and year
+        current_month_year = datetime.now().strftime("%B %Y")
 
-    params = []
-    for field in template:
-        value = intent_dict.get(field, "").strip()
+        params = []
+        for field in template:
+            value = intent_dict.get(field, "").strip()
 
-        # Handle Account Name/Number missing case
-        if field in ["Account Name", "Account Number"]:
-            if not value or value.lower() in ['', 'none', 'null', 'placeholder']:
-                params.append('"*"')
-                continue
+            # Handle Account Name/Number missing case
+            if field in ["Account Name", "Account Number"]:
+                if not value or value.lower() in ['', 'none', 'null', 'placeholder']:
+                    params.append('"*"')
+                    continue
 
-        # Default to current month and year if From Period or To Period is missing
-        if field in ["From Period", "To Period"] and not value:
-            value = current_month_year
+            # Default to current month and year if From Period or To Period is missing
+            if field in ["From Period", "To Period"] and not value:
+                value = current_month_year
 
-        if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
-            params.append(f'"{value}"')
-        elif field in ["Customer Number", "Customer Name", "Account Name",
-                       "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
-            params.append(f'{{"{value}"}}')
-        else:
-            params.append(f'"{value}"')
+            if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
+                params.append(f'"{value}"')
+            elif field in ["Customer Number", "Customer Name", "Account Name",
+                          "Classification", "Department", "Location", "Vendor Name", "Vendor Number", "Class"]:
+                params.append(f'"{value}"')
+            else:
+                params.append(f'"{value}"')
 
-    return f'{formula_type}({", ".join(params)})'
+        return f'{formula_type}({", ".join(params)})'
+    except Exception as e:
+        print(f"Error in format_formula_with_intent: {e}")
+        return ""
 
 def validate_gpt_formula_output(gpt_formula: str) -> dict:
     """
@@ -397,297 +395,224 @@ def format_placeholder(value):
     """Ensures consistent placeholder formatting."""
     return value if isinstance(value, str) else str(value)
 
-# Utility functions
 def best_partial_match(input_val, possible_vals, field_name=None):
-    """Find the best partial match for a value using semantic search with precomputed embeddings."""
+    """Find the best partial match for a value using difflib.get_close_matches."""
     if not input_val or not possible_vals:
         return None
 
     input_val = input_val.strip().lower()
-
-    # Map field_name to embedding column key
-    field_to_embedding_key = {
-        "Subsidiary": "Subsidiary",
-        "Classification": "Classification/Brand/Cost Center/Class",
-        "Class": "Classification/Brand/Cost Center/Class",
-        "Department": "Department",
-        "Location": "Location",
-        "Budget category": "BudgetCategory",
-        "Currency": "Currency",
-        "Account Number": "Account Name",  # Match against Account Name embeddings
-        "Account Name": "Account Name",
-        "Customer Number": "Customer",
-        "Customer Name": "Customer",
-        "Vendor Number": "Vendor",
-        "Vendor Name": "Vendor"
-    }
-
-    embedding_key = field_to_embedding_key.get(field_name, field_name)
-
-    if embedding_key not in column_embeddings:
-        return None
-
-    # Get embeddings and corresponding values
-    embeddings = column_embeddings[embedding_key]
-    column_values = netsuite_df[embedding_key].fillna("").astype(str).tolist()
-
     # Check for exact match first
-    for idx, val in enumerate(column_values):
+    for val in possible_vals:
         if input_val == val.lower():
             return val
 
-    # Semantic search
-    query_embedding = model.encode([input_val], convert_to_tensor=False)
-    similarities = cosine_similarity(query_embedding, embeddings)[0]
-
-    # Get top match
-    top_idx = np.argmax(similarities)
-    top_similarity = similarities[top_idx]
-
-    # Field-specific thresholds
-    field_thresholds = {
-        "Subsidiary": 0.7,
-        "Classification": 0.75,
-        "Class": 0.75,
-        "Department": 0.75,
-        "Location": 0.8,
-        "Budget category": 0.75,
-        "Currency": 0.8,
-        "Account Number": 0.8,
-        "Account Name": 0.8,
-        "Customer Number": 0.75,
-        "Customer Name": 0.8,
-        "Vendor Number": 0.8,
-        "Vendor Name": 0.8
-    }
-
-    threshold = field_thresholds.get(field_name, 0.7)
-
-    if top_similarity >= threshold:
-        return column_values[top_idx]
+    # Use difflib.get_close_matches for fuzzy matching
+    matches = get_close_matches(input_val, possible_vals, n=1, cutoff=0.6)
+    if matches:
+        return matches[0]
 
     # Handle travel aliases for Account Name
     if field_name in ["Account Name", "Account Number"]:
         travel_aliases = ["travel", "trav", "expense", "exp"]
         if input_val in travel_aliases:
-            travel_indices = [i for i, val in enumerate(column_values) if "travel" in val.lower()]
-            if travel_indices:
-                travel_similarities = similarities[travel_indices]
-                top_travel_idx = travel_indices[np.argmax(travel_similarities)]
-                if similarities[top_travel_idx] >= 0.75:
-                    return column_values[top_travel_idx]
+            travel_matches = [val for val in possible_vals if "travel" in val.lower()]
+            if travel_matches:
+                return travel_matches[0]
 
     return None
 
 def validate_intent_fields_v2(intent_dict, original_query=""):
-    validated = {}
-    notes = {}
-    warnings = []
-    placeholder_patterns = [r'\[.*?\]', r'\{.*?\}', r'^\{\".*?\"\}$']
+    try:
+        validated = {}
+        notes = {}
+        warnings = []
+        placeholder_patterns = [r'\[.*?\]', r'\{.*?\}', r'^\{\".*?\"\}$']
 
-    # Define period mapping
-    current_date = datetime(2025, 5, 12)  # Fixed date for consistency
-    period_mapping = {
-        "current month": current_date.strftime("%B %Y"),  # May 2025
-        "last month": (current_date - relativedelta(months=1)).strftime("%B %Y")  # April 2025
-    }
+        # Define period mapping
+        current_date = datetime(2025, 5, 12)  # Fixed date for consistency
+        period_mapping = {
+            "current month": current_date.strftime("%B %Y"),  # May 2025
+            "last month": (current_date - relativedelta(months=1)).strftime("%B %Y")  # April 2025
+        }
 
-    # Define strict placeholder values to preserve
-    placeholder_values = [
-        'subsidiary', 'classification', 'class', 'department', 'location',
-        'currency', 'account number', 'account name',
-        'customer number', 'customer name', 'vendor number', 'vendor name',
-        'from period', 'to period', 'high/low', 'limit of record', 'table_name'
-    ]
+        # Define strict placeholder values to preserve
+        placeholder_values = [
+            'subsidiary', 'classification', 'class', 'department', 'location',
+            'currency', 'account number', 'account name',
+            'customer number', 'customer name', 'vendor number', 'vendor name',
+            'from period', 'to period', 'high/low', 'limit of record', 'table_name'
+        ]
 
-    # Handle other fields
-    for key, value in intent_dict.items():
-        is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
-        clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
+        # Handle other fields
+        for key, value in intent_dict.items():
+            is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
+            clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
 
-        # Handle From Period and To Period
-        if key in ["From Period", "To Period"]:
-            if clean_val in period_mapping:
-                validated[key] = period_mapping[clean_val]
-                notes[key] = f"Mapped '{clean_val}' to '{validated[key]}'"
-            else:
-                # Fallback to existing period normalization logic
-                try:
-                    from_val = intent_dict.get("From Period", "")
-                    to_val = intent_dict.get("To Period", "")
-                    from_val_clean = re.sub(r'[{}\"]', '', str(from_val)).strip()
-                    to_val_clean = re.sub(r'[{}\"]', '', str(to_val)).strip()
-                    from_p, to_p = get_period_range(from_val_clean, to_val_clean or from_val_clean)
-                    from_val_final, to_val_final = validate_period_order(from_p, to_p)
+            # Handle From Period and To Period
+            if key in ["From Period", "To Period"]:
+                if clean_val in period_mapping:
+                    validated[key] = period_mapping[clean_val]
+                    notes[key] = f"Mapped '{clean_val}' to '{validated[key]}'"
+                else:
+                    try:
+                        from_val = intent_dict.get("From Period", "")
+                        to_val = intent_dict.get("To Period", "")
+                        from_val_clean = re.sub(r'[{}\"]', '', str(from_val)).strip()
+                        to_val_clean = re.sub(r'[{}\"]', '', str(to_val)).strip()
+                        from_p, to_p = get_period_range(from_val_clean, to_val_clean or from_val_clean)
+                        from_val_final, to_val_final = validate_period_order(from_p, to_p)
 
-                    if "Check: From > To" in to_val_final:
-                        validated["From Period"] = from_p
-                        validated["To Period"] = to_p + " invalid input"
-                        notes["From Period"] = validated["From Period"]
-                        notes["To Period"] = validated["To Period"]
-                        warnings.append("To Period is earlier than From Period.")
-                    else:
-                        validated["From Period"] = from_val_final
-                        validated["To Period"] = to_val_final
-                        notes["From Period"] = from_val_final
-                        notes["To Period"] = to_val_final
-                except Exception as e:
-                    validated[key] = clean_val or "Current month"
-                    notes[key] = f"Could not normalize period: {str(e)}"
-                    warnings.append(f"Period normalization error: {str(e)}")
-            continue
+                        if "Check: From > To" in to_val_final:
+                            validated["From Period"] = from_p
+                            validated["To Period"] = to_p + " invalid input"
+                            notes["From Period"] = validated["From Period"]
+                            notes["To Period"] = validated["To Period"]
+                            warnings.append("To Period is earlier than From Period.")
+                        else:
+                            validated["From Period"] = from_val_final
+                            validated["To Period"] = to_val_final
+                            notes["From Period"] = from_val_final
+                            notes["To Period"] = to_val_final
+                    except Exception as e:
+                        validated[key] = clean_val or "Current month"
+                        notes[key] = f"Could not normalize period: {str(e)}"
+                        warnings.append(f"Period normalization error: {str(e)}")
+                continue
 
-        # Check if Account Name or Account Number is specified
-        account_name_val = intent_dict.get("Account Name", "")
-        account_number_val = intent_dict.get("Account Number", "")
-        account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
-        account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
-        account_is_placeholder = (
-            any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
-            account_name_clean in ['account_name', 'account name', ''] or
-            any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
-            account_number_clean in ['account_number', 'account number', '']
-        )
+            # Check if Account Name or Account Number is specified
+            account_name_val = intent_dict.get("Account Name", "")
+            account_number_val = intent_dict.get("Account Number", "")
+            account_name_clean = re.sub(r'[{}"\'\[\]]', '', str(account_name_val)).strip().lower()
+            account_number_clean = re.sub(r'[{}"\'\[\]]', '', str(account_number_val)).strip().lower()
+            account_is_placeholder = (
+                any(re.search(pattern, str(account_name_val)) for pattern in placeholder_patterns) or
+                account_name_clean in ['account_name', 'account name', ''] or
+                any(re.search(pattern, str(account_number_val)) for pattern in placeholder_patterns) or
+                account_number_clean in ['account_number', 'account number', '']
+            )
 
-        if key == "Account Name" and account_is_placeholder and not account_number_clean:
-            validated[key] = '"*"'
-            notes[key] = "No account specified, using wildcard"
-            continue
+            if key == "Account Name" and account_is_placeholder and not account_number_clean:
+                validated[key] = '"*"'
+                notes[key] = "No account specified, using wildcard"
+                continue
 
-        if key == "Budget category" and (is_placeholder or clean_val in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory']):
-            validated[key] = '"Standard Budget"'
-            notes[key] = "Default to Standard Budget"
-            continue
+            if key == "Budget category" and (
+                is_placeholder or clean_val in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory']
+            ):
+                validated[key] = '"Standard Budget"'
+                notes[key] = "Default to Standard Budget"
+                continue
 
-        if is_placeholder and (
-            clean_val in placeholder_values or
-            clean_val in [key.lower(), key.lower().replace(" ", "_"), key.lower() + "_name", key.lower() + "_number"]
-        ):
-            validated[key] = value
-            notes[key] = "Generic placeholder preserved"
-            continue
+            if is_placeholder and (
+                clean_val in placeholder_values or
+                clean_val in [key.lower(), key.lower().replace(" ", "_"), key.lower() + "_name", key.lower() + "_number"]
+            ):
+                validated[key] = value
+                notes[key] = "Generic placeholder preserved"
+                continue
 
-        if is_placeholder and key not in ["Account Name"]:
-            validated[key] = format_placeholder(value)
-            notes[key] = "Placeholder preserved"
-            continue
+            if is_placeholder and key not in ["Account Name"]:
+                validated[key] = format_placeholder(value)
+                notes[key] = "Placeholder preserved"
+                continue
 
-        canonical_col = unified_columns.get(key, key).lower()
-        possible_values = canonical_values.get(canonical_col, [])
-
-        if key == "Account Number":
-            canonical_col = 'account name'  # Always match Account Number against Account Name column
+            canonical_col = unified_columns.get(key, key).lower()
             possible_values = canonical_values.get(canonical_col, [])
 
-        if key.lower() == "high/low":
-            if original_query.lower().find("lowest") != -1:
-                validated[key] = "low"
-                notes[key] = "Set to low based on query"
-            elif clean_val in ["high", "low"]:
-                validated[key] = clean_val
-                notes[key] = "Exact match"
-            elif "high_low" in clean_val:
-                validated[key] = value
-                notes[key] = "Placeholder preserved"
-            else:
-                validated[key] = "high"
-                notes[key] = "Default value used"
-            continue
+            if key == "Account Number":
+                canonical_col = 'account name'  # Always match Account Number against Account Name column
+                possible_values = canonical_values.get(canonical_col, [])
 
-        if key.lower() == "limit of record":
-            if clean_val.isdigit():
-                validated[key] = clean_val
-                notes[key] = "Valid integer"
-            elif "limit" in clean_val:
-                validated[key] = clean_val
-                notes[key] = "Placeholder preserved"
-            else:
-                validated[key] = "10"
-                notes[key] = "Default value used"
-            continue
+            if key.lower() == "high/low":
+                if original_query.lower().find("lowest") != -1:
+                    validated[key] = "low"
+                    notes[key] = "Set to low based on query"
+                elif clean_val in ["high", "low"]:
+                    validated[key] = clean_val
+                    notes[key] = "Exact match"
+                elif "high_low" in clean_val:
+                    validated[key] = value
+                    notes[key] = "Placeholder preserved"
+                else:
+                    validated[key] = "high"
+                    notes[key] = "Default value used"
+                continue
 
-        if clean_val in ["", "-", "!", "not found"]:
-            validated[key] = '"Standard Budget"' if key == "Budget category" else ""
-            notes[key] = "Default to Standard Budget" if key == "Budget category" else "Empty or already invalid"
-            continue
-        
-        # Try exact match first
-        exact_matches = pinecone_manager.exact_search(clean_val, column=pinecone_column, top_k=1)
-        if exact_matches:
-            matched = exact_matches[0].metadata.get('value')
-            validated[key] = f'"{matched}"'
-            notes[key] = "Exact match"
-        else:
-            # Try semantic search
-            partial = best_partial_match(clean_val, [], key)
-            if partial:
-                validated[key] = f'"{partial}"'
-                notes[key] = "Partial match"
+            if key.lower() == "limit of record":
+                if clean_val.isdigit():
+                    validated[key] = clean_val
+                    notes[key] = "Valid integer"
+                elif "limit" in clean_val:
+                    validated[key] = clean_val
+                    notes[key] = "Placeholder preserved"
+                else:
+                    validated[key] = "10"
+                    notes[key] = "Default value used"
+                continue
+
+            if clean_val in ["", "-", "!", "not found"]:
+                validated[key] = '"Standard Budget"' if key == "Budget category" else ""
+                notes[key] = "Default to Standard Budget" if key == "Budget category" else "Empty or already invalid"
+                continue
+
+            # Try exact match first
+            if clean_val in possible_values:
+                mapped_col = column_mapping.get(canonical_col, canonical_col)
+                if mapped_col in netsuite_df.columns:
+                    matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                    if v.strip().lower() == clean_val), clean_val)
+                    validated[key] = f'"{matched}"'
+                    notes[key] = "Exact match"
+                else:
+                    validated[key] = f'"{clean_val}"'
+                    notes[key] = "Exact match (no column mapping)"
             else:
-                # Try searching in other columns
-                found = False
-                for other_field, other_column in column_map.items():
-                    if other_field != key:
-                        other_matches = pinecone_manager.semantic_search(clean_val, column=other_column, top_k=1)
-                        if other_matches and other_matches[0].score >= 0.75:
-                            matched = other_matches[0].metadata.get('value')
-                            validated[key] = f'"{matched}"'
-                            notes[key] = f"Found in {other_field} column"
-                            found = True
-                            break
-                
-                if not found:
-                    if key in key_fields:
-                        retry_match = best_partial_match(clean_val, possible_values, key)
-                        if retry_match:
-                            mapped_col = column_mapping.get(canonical_col, canonical_col)
-                            if mapped_col in netsuite_df.columns:
-                                matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                                if v.strip().lower() == retry_match.strip().lower()), retry_match)
-                                validated[key] = matched
-                                notes[key] = "Retry partial match"
-                            else:
-                                validated[key] = retry_match
-                                notes[key] = "Retry partial match (no column mapping)"
-                        else:
-                            if key == "Budget category":
-                                validated[key] = '"Standard Budget"'
-                                notes[key] = "Default to Standard Budget"
-                            else:
-                                validated[key] = value if is_placeholder else clean_val
-                                notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched in any known column"
-                                if not is_placeholder:
-                                    warnings.append(f"'{clean_val}' in {key} not recognized in any column.")
+                # Try fuzzy matching
+                partial = best_partial_match(clean_val, possible_values, key)
+                if partial:
+                    mapped_col = column_mapping.get(canonical_col, canonical_col)
+                    if mapped_col in netsuite_df.columns:
+                        matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                        if v.strip().lower() == partial), partial)
+                        validated[key] = f'"{matched}"'
+                        notes[key] = "Partial match"
                     else:
-                        if key == "Budget category":
-                            validated[key] = '"Standard Budget"'
-                            notes[key] = "Default to Standard Budget"
-                        else:
-                            validated[key] = value if is_placeholder else clean_val
-                            notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched in any known column"
-                            if not is_placeholder:
-                                warnings.append(f"'{clean_val}' in {key} not recognized in any column.")
+                        validated[key] = f'"{partial}"'
+                        notes[key] = "Partial match (no column mapping)"
+                else:
+                    if key == "Budget category":
+                        validated[key] = '"Standard Budget"'
+                        notes[key] = "Default to Standard Budget"
+                    else:
+                        validated[key] = value if is_placeholder else clean_val
+                        notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched"
+                        if not is_placeholder:
+                            warnings.append(f"'{clean_val}' in {key} not recognized.")
 
-    smart_input = validated.copy()
-    for lk in ["Limit of record", "high/low"]:
-        if lk in smart_input:
-            smart_input[lk] = "LOCKED_VALUE"
+        print("Validated Intent:", validated)
+        smart_input = validated.copy()
+        for lk in ["Limit of record", "high/low"]:
+            if lk in smart_input:
+                smart_input[lk] = "LOCKED_VALUE"
 
-    smart = smart_intent_correction_restricted(smart_input)
-    smart_validated = smart["validated_intent"]
+        smart = smart_intent_correction_restricted(smart_input)
+        smart_validated = smart["validated_intent"]
 
-    for lk in ["Limit of record", "high/low"]:
-        if lk in validated:
-            smart_validated[lk] = validated.get(lk, "")
+        for lk in ["Limit of record", "high/low"]:
+            if lk in validated:
+                smart_validated[lk] = validated.get(lk, "")
 
-    final_validated = correct_validated_intent_with_fuzzy(smart_validated, canonical_values)
+        final_validated = correct_validated_intent_with_fuzzy(smart_validated, canonical_values)
 
-    return {
-        "validated_intent": final_validated,
-        "match_notes": notes,
-        "warnings": warnings,
-        "original_intent": intent_dict
-    }
+        return {
+            "validated_intent": final_validated,
+            "match_notes": notes,
+            "warnings": warnings,
+            "original_intent": intent_dict
+        }
+    except Exception as e:
+        print(f"Error in validate_intent_fields_v2: {e}")
+        return {"validated_intent": {}, "original_intent": intent_dict, "match_notes": {}, "warnings": []}
 
 def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values: dict) -> dict:
     """
@@ -702,9 +627,8 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         "Location": 80,
         "Budget category": 75,
         "Currency": 80,
-        "Account type": 80,
-        "Account Number": 80,  # Adjusted to match Account Name
-        "Account Name": 80,    # Increased threshold
+        "Account Number": 80,
+        "Account Name": 80,
         "Customer Number": 75,
         "Customer Name": 80,
         "Vendor Number": 80,
@@ -768,8 +692,6 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
                 corrected_intent[field] = value
             continue
 
-        threshold = field_thresholds.get(field, 60)
-
         if raw in possible_values:
             mapped_col = column_mapping.get(canonical_col, canonical_col)
             if mapped_col in netsuite_df.columns:
@@ -817,4 +739,3 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         corrected_intent[field] = formatted
 
     return corrected_intent
-
