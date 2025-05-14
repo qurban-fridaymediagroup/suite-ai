@@ -610,48 +610,32 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             validated[key] = '"Standard Budget"' if key == "Budget category" else ""
             notes[key] = "Default to Standard Budget" if key == "Budget category" else "Empty or already invalid"
             continue
-
-        if possible_values and clean_val in possible_values:
-            mapped_col = column_mapping.get(canonical_col, canonical_col)
-            if mapped_col in netsuite_df.columns:
-                matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                if v.strip().lower() == clean_val), clean_val)
-                validated[key] = matched
-                notes[key] = "Exact match"
-            else:
-                validated[key] = clean_val
-                notes[key] = "Exact match (no column mapping)"
+        
+        # Try exact match first
+        exact_matches = pinecone_manager.exact_search(clean_val, column=pinecone_column, top_k=1)
+        if exact_matches:
+            matched = exact_matches[0].metadata.get('value')
+            validated[key] = f'"{matched}"'
+            notes[key] = "Exact match"
         else:
-            partial = best_partial_match(clean_val, possible_values, key)
+            # Try semantic search
+            partial = best_partial_match(clean_val, [], key)
             if partial:
-                mapped_col = column_mapping.get(canonical_col, canonical_col)
-                if mapped_col in netsuite_df.columns:
-                    matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                    if v.strip().lower() == partial.strip().lower()), partial)
-                    validated[key] = matched
-                    notes[key] = "Partial match"
-                else:
-                    validated[key] = partial
-                    notes[key] = "Partial match (no column mapping)"
+                validated[key] = f'"{partial}"'
+                notes[key] = "Partial match"
             else:
+                # Try searching in other columns
                 found = False
-                for other_col, other_vals in canonical_values.items():
-                    if other_col != canonical_col and other_col != 'account name':
-                        if clean_val in other_vals:
-                            validated[key] = clean_val
-                            notes[key] = f"Found in {other_col} column"
+                for other_field, other_column in column_map.items():
+                    if other_field != key:
+                        other_matches = pinecone_manager.semantic_search(clean_val, column=other_column, top_k=1)
+                        if other_matches and other_matches[0].score >= 0.75:
+                            matched = other_matches[0].metadata.get('value')
+                            validated[key] = f'"{matched}"'
+                            notes[key] = f"Found in {other_field} column"
                             found = True
                             break
-                        partial_other = best_partial_match(clean_val, other_vals, key)
-                        if partial_other:
-                            mapped_col = column_mapping.get(other_col, other_col)
-                            if mapped_col in netsuite_df.columns:
-                                matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                                if v.strip().lower() == partial_other.strip().lower()), partial_other)
-                                validated[key] = matched
-                                notes[key] = f"Partial match in {other_col} column"
-                                found = True
-                                break
+                
                 if not found:
                     if key in key_fields:
                         retry_match = best_partial_match(clean_val, possible_values, key)
