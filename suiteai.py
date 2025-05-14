@@ -54,7 +54,9 @@ def normalize_prompt(text, threshold=0.75):
         'class': 'classification',
         'cust': 'customer number',
         'vend': 'vendor name',
-        'vendor': 'vendor name'
+        'vendor': 'vendor name',
+        'banglor': 'location Bangalore',  # Added to correct misspelling
+        'friday-ad': 'subsidiary Friday Media Group (Consolidated)'  # Added for subsidiary
     }
 
     # Load normalization dictionary keys
@@ -67,6 +69,7 @@ def normalize_prompt(text, threshold=0.75):
     # Split text into words, preserving spaces and special characters
     words = re.findall(r'\b\w+\b|[^\w\s]', text)
     result = []
+    dictionary_keys = list(normalisation_dict.keys())
 
     # Process words one by one
     i = 0
@@ -177,7 +180,6 @@ def parse_formula_to_intent(formula_str: str):
 
     formula_type = match.group(1).upper()
     raw_params = match.group(2)
-    params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}]*\})', raw_params)]
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
@@ -526,17 +528,19 @@ if not st.session_state.has_valid_api_key:
 
 # Settings section with expander
 with st.expander("Settings"):
-    # Model ID input
     new_model = st.text_input("Fine-tuned Model ID", value=st.session_state.fine_tuned_model)
     if new_model != st.session_state.fine_tuned_model:
         st.session_state.fine_tuned_model = new_model
         st.success("Model ID updated!")
-
-    # System prompt input
     new_prompt = st.text_area("System Prompt", value=st.session_state.system_prompt, height=300)
     if new_prompt != st.session_state.system_prompt:
         st.session_state.system_prompt = new_prompt
         st.success("System prompt updated!")
+    new_key = st.text_input("OpenAI API Key", value=st.session_state.gpt_key, type="password")
+    if new_key != st.session_state.gpt_key:
+        st.session_state.gpt_key = new_key
+        st.session_state.has_valid_api_key = bool(new_key)
+        st.success("API key updated!")
 
     # GPT key input (also in settings)
     new_key = st.text_input("OpenAI API Key", value=st.session_state.gpt_key, type="password")
@@ -570,13 +574,10 @@ query = st.chat_input("Ask about Netsuite formulas...", disabled=not st.session_
 if query and st.session_state.has_valid_api_key:
     # Normalize the query before processing
     normalized_query = normalize_prompt(query)
-
-    # Add user message to chat
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user"):
         st.write(query)
 
-    # Get AI response
     try:
         # Initialize OpenAI client with the current API key
         client = OpenAI(api_key=st.session_state.gpt_key)
@@ -608,7 +609,6 @@ if query and st.session_state.has_valid_api_key:
                 "normalized_query": normalized_query
             })
             with st.chat_message("assistant"):
-                # Display normalized query
                 st.markdown("**Normalized Query:**")
                 st.code(normalized_query, language="text")
 
@@ -660,8 +660,33 @@ if query and st.session_state.has_valid_api_key:
                 st.error("No response generated")
     except Exception as e:
         st.error(f"Error generating response: {str(e)}")
+        # Display partial results if available
+        assistant_message = {
+            "role": "assistant",
+            "content": f"Error occurred: {str(e)}. Partial results (if any):",
+            "normalized_query": normalized_query,
+            "formula": formula_text,
+            "validated": validated_results,
+            "regenerated_formula": regenerated_formulas
+        }
+        st.session_state.messages.append(assistant_message)
+        with st.chat_message("assistant"):
+            st.markdown("**Normalized Query:**")
+            st.code(normalized_query, language="text")
+            st.markdown("**GPT Response:**")
+            st.code(formula_text, language="text")
+            if validated_results:
+                # For a single formula (no loop)
+                st.subheader("Validation Results:")
+                st.write(validated_intent)
+                
+                # And for the final formula
+                st.subheader("Final Response:")
+                st.code(final_formula, language="text")
+            else:
+                st.markdown("**Note:** No validation results available due to error.")
 
-# Add copy chat history button
+# Copy chat history button
 if st.session_state.messages:
     if st.button("Copy Chat History"):
         chat_history = "\n\n".join(
@@ -671,8 +696,10 @@ if st.session_state.messages:
         st.toast("Chat history copied to clipboard!")
         st.code(chat_history, language="text")
 
-# Add clear chat button
+# Clear chat button
 if st.session_state.messages:
     if st.button("Clear Chat"):
         st.session_state.messages = []
         st.rerun()
+
+        
