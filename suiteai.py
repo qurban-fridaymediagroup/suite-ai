@@ -214,11 +214,10 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Define all fields to check for placeholders
         all_fields = [
-            "Subsidiary", "Account Number", "Account Name", "Classification", "account_name",
-            "Department", "Location", "Customer Number", "Customer Name",
-            "Vendor Name", "Vendor Number", "Class", "high/low", "Limit of Records",
-            "Budget category", "From Period", "To Period", "TABLE_NAME",
-            "Grouping and Filtering"
+            "Subsidiary", "Account", "Account", "Classification", "account",
+            "Department", "Location", "Customer", "Vendor", "Class",
+            "high/low", "Limit of Records",
+            "Budget Category", "From Period", "To Period", "TABLE_NAME"
         ]
 
         # Placeholder formats from field_format_map
@@ -367,7 +366,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
     formula_str += ")"
     return formula_str
-    
+
 # Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
     st.session_state.fine_tuned_model = "ft:gpt-4o-mini-2024-07-18:hellofriday::BU8GWu9n"
@@ -515,10 +514,10 @@ if query and st.session_state.has_valid_api_key:
         # Check if content exists before calling strip()
         formula = content.strip() if content else ""
         # Replace [account_name] or account_name with [*] in GPT response for SUITECUS
-      
+
         formula = re.sub(r'\[account\]|account', '[*]', formula, flags=re.IGNORECASE)
         parsed = parse_formula_to_intent(formula)
-
+        print(parsed)
         # Check if there was an error in parsing
         if "error" in parsed:
             # If there's a mismatch in formula parameters, just display the GPT response
@@ -544,8 +543,8 @@ if query and st.session_state.has_valid_api_key:
             ):
                 validated['validated_intent']['Account Name'] = '"*"'
             regenerated_formula = generate_formula_from_intent(
-                parsed["formula_type"], 
-                validated["validated_intent"], 
+                parsed["formula_type"],
+                validated["validated_intent"],
                 formula_mapping,
                 has_account_name_placeholder=parsed["has_account_name_placeholder"]
             )
@@ -597,3 +596,5 @@ if st.session_state.messages:
     if st.button("Clear Chat"):
         st.session_state.messages = []
         st.rerun()
+
+

@@ -12,7 +12,7 @@ normalisation_dict = {
     # Account Number
     'account number': 'Account', 'acount number': 'Account',
     'accout number': 'Account', 'accont number': 'Account',
-    'acoount no': 'Account', 'account numbers': 'Account', 
+    'acoount no': 'Account', 'account numbers': 'Account',
     'acc no': 'Account', 'a/c no': 'Account', 'acc#': 'Account', 'a#': 'Account',
     'acct no': 'Account', 'ac no': 'Account', 'account id': 'Account',
     'gl no': 'Account', 'ledger id': 'Account', 'ledger number': 'Account',
@@ -42,13 +42,13 @@ normalisation_dict = {
     'classification': 'Class', 'classfication': 'Class',
     'clssfication': 'Class', 'classifcation': 'Class',
     'cls': 'Class', 'clss': 'Class', 'cat cls': 'Class',
-    'category': 'Class', 'type': 'Class', 
+    'category': 'Class', 'type': 'Class',
     'brand': 'Class', 'brnd': 'Class', 'class': 'Class',
     'grp class': 'Class', 'cat class': 'Class',
 
     # Department
     'department': 'Department', 'deprtment': 'Department', 'departmnt': 'Department',
-    'deparment': 'Department', 'depertment': 'Department', 'dept': 'Department',
+    'deparment': 'Department', 'depertment': 'Department',
     'dep': 'Department', 'dpmt': 'Department', 'unit': 'Department',
     'branch office': 'Department', 'section': 'Department', 'dept id': 'Department',
     'department id': 'Department', 'dept': 'Department', 'division': 'Department',
