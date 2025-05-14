@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
 from rapidfuzz import process, fuzz
-from datetime import datetime, timedelta
+import json
 
 # Load environment variables
 load_dotenv()
@@ -31,8 +31,6 @@ def normalize_prompt(text, threshold=85):
         'acc': 'account',
         'acct': 'account',
         'accnt': 'account',
-        'a / c': 'account',
-        'a/c': 'account',
         'locati': 'location',
         'loc': 'location',
         'subs': 'subsidiary',
@@ -42,9 +40,9 @@ def normalize_prompt(text, threshold=85):
         'cat': 'budget category',
         'cls': 'classification',
         'class': 'classification',
-        'cust': 'customer',
-        'vend': 'vendor',
-        'vendor': 'vendor'
+        'cust': 'customer number',
+        'vend': 'vendor name',
+        'vendor': 'vendor name'
     }
 
     # Split text into words, preserving spaces and special characters
@@ -66,18 +64,6 @@ def normalize_prompt(text, threshold=85):
                 found_multi_word = True
                 break
             if phrase in normalisation_dict:
-                # Special case for "budget report" or similar phrases
-                if "budget" in phrase and "category" not in phrase:
-                    result.append("Budget")
-                    # Add the remaining words separately
-                    for k in range(1, j):
-                        if words[i+k] in normalisation_dict:
-                            result.append(normalisation_dict[words[i+k]])
-                        else:
-                            result.append(words[i+k])
-                    i += j
-                    found_multi_word = True
-                    break
                 result.append(normalisation_dict[phrase])
                 i += j
                 found_multi_word = True
@@ -92,14 +78,7 @@ def normalize_prompt(text, threshold=85):
         if word in abbrev_mapping:
             result.append(abbrev_mapping[word])
         elif word in normalisation_dict:
-            # Special case for "budget" - don't convert to "Budget_Category"
-            if word.lower() == "budget":
-                result.append("Budget")
-            # Special case for "subsistence" - treat as account name, not subsidiary
-            elif word.lower() == "subsistence":
-                result.append("Account_Name subsistence")
-            else:
-                result.append(normalisation_dict[word])
+            result.append(normalisation_dict[word])
         else:
             # Only apply fuzzy matching to potential business terms
             # Skip common words, numbers, months, etc.
@@ -121,23 +100,9 @@ def normalize_prompt(text, threshold=85):
                 # Try fuzzy matching for potential business terms
                 match, score, _ = process.extractOne(word, dictionary_keys, scorer=fuzz.WRatio)
                 if score >= threshold:
-                    # Special case for fuzzy matching "budget"
-                    if match.lower() == "budget" or "budget" in match.lower():
-                        result.append("Budget")
-                    # Special case for fuzzy matching "subsistence"
-                    elif match.lower() == "subsistence" or word.lower() == "subsistence":
-                        result.append("Account_Name subsistence")
-                    # Special case for fuzzy matching "subsidiary"
-                    elif match.lower() == "subsidiary" and word.lower() == "subsistence":
-                        result.append("Account_Name subsistence")
-                    else:
-                        result.append(normalisation_dict[match])
+                    result.append(normalisation_dict[match])
                 else:
-                    # Special case for "subsistence" when no match is found
-                    if word.lower() == "subsistence":
-                        result.append("Account_Name subsistence")
-                    else:
-                        result.append(word)
+                    result.append(word)
         i += 1
 
     # Join words with single spaces and remove extra spaces
@@ -151,7 +116,6 @@ def normalize_prompt(text, threshold=85):
 
 def parse_formula_to_intent(formula_str: str):
     match = re.match(r'(\w+)\((.*)\)', formula_str)
-    
     if not match:
         return {"error": "Invalid formula format."}
 
@@ -161,21 +125,10 @@ def parse_formula_to_intent(formula_str: str):
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
-    
-    print("\n")
-    print("formula_type:", formula_type)
-    print("params:", params)
-    print("\n")
-    # Create the intent dictionary
-    intent_dict = dict(zip(formula_mapping[formula_type], params))
-    
-    # Check for [account_name] or [account_number] in the formula and mark it for asterisk
-    has_account_name_placeholder = '[account_name]' in formula_str.lower() or '[account_number]' in formula_str.lower()
-    
+
     return {
         "formula_type": formula_type,
-        "intent": intent_dict,
-        "has_account_name_placeholder": has_account_name_placeholder
+        "intent": dict(zip(formula_mapping[formula_type], params))
     }
 
 def format_all_formula_mappings(mapping: dict) -> str:
@@ -183,15 +136,13 @@ def format_all_formula_mappings(mapping: dict) -> str:
         [f"{name}({', '.join(params)})" for name, params in mapping.items()]
     )
 
-def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict, has_account_name_placeholder: bool = False) -> str:
+def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict) -> str:
     """
     Generate NetSuite formula using the validated intent, maintaining the order and formula type.
-    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name, account_name,
-    Vendor Number, Customer Name, Customer Number; outputs '*' for [account_name] in validation and final response.
-    Hard-codes 'Accounts Receivable' for Account Name in the final formula.
+    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name,
+    Vendor Number, Customer Name, Customer Number; otherwise, outputs a comma.
     Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
     Uses 'Current month' for From Period and To Period if not mentioned.
-    Use "*" for account_name in validation and final response if it present in GPT response.
     For SUITEREC, uses TABLE_NAME directly from validated intent with proper quoting.
     """
     if formula_type not in formula_mapping:
@@ -219,27 +170,28 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Define all fields to check for placeholders
         all_fields = [
-            "Subsidiary", "Account", "Account", "Classification", "account",
-            "Department", "Location", "Customer", "Vendor", "Class",
-            "high/low", "Limit of Records",
-            "Budget Category", "From Period", "To Period", "TABLE_NAME"
+            "Subsidiary", "Account Number", "Account Name", "Classification",
+            "Department", "Location", "Customer Number", "Customer Name",
+            "Vendor Name", "Vendor Number", "Class", "high/low", "Limit of Records",
+            "Budget category", "From Period", "To Period", "TABLE_NAME",
+            "Grouping and Filtering"
         ]
 
         # Placeholder formats from field_format_map
         placeholder_formats = {
             "Subsidiary": "Subsidiary",
             "Budget category": '"Budget category"',
-            "Account Number": '{"Account"}',
-            "Account Name": '{"Account"}',
+            "Account Number": '{"Account Number"}',
+            "Account Name": '{"Account Name"}',
             "From Period": '"From Period"',
             "To Period": '"To Period"',
             "Classification": '{"Classification"}',
             "Department": '{"Department"}',
             "Location": '{"Location"}',
-            "Customer Number": '{"Customer"}',
-            "Customer Name": '{"Customer"}',
-            "Vendor Name": '{"Vendor"}',
-            "Vendor Number": '{"Vendor"}',
+            "Customer Number": '{"Customer Number"}',
+            "Customer Name": '{"Customer Name"}',
+            "Vendor Name": '{"Vendor Name"}',
+            "Vendor Number": '{"Vendor Number"}',
             "Class": '{"Class"}',
             "high/low": '"high/low"',
             "Limit of Records": '"Limit of record"',
@@ -248,7 +200,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
         # Fields that should output '*' when placeholder or missing
         asterisk_fields = [
-            "Account Name", "Account Number", "Vendor Name", "Vendor Number", "account_name",
+            "Account Name", "Account Number", "Vendor Name", "Vendor Number",
             "Customer Name", "Customer Number"
         ]
 
@@ -270,7 +222,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             'department', 'location', 'subsidiary', 'class', 'limit of records',
             'from period', 'to period', 'from_period', 'to_period', 'vendor name',
             'customer number', 'customer name', 'vendor number', 'account number',
-            'account name', 'budget category', 'budget', 'table_name', 'grouping and filtering',
+            'account name', 'budget category', 'table_name', 'grouping and filtering',
             'grouping_and_filtering', '', 'none', 'null', 'placeholder'
         ]
 
@@ -292,7 +244,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
         )
 
         # Handle Subsidiary
-        if field == "Subsidiary" or field == "your_subsidiary":
+        if field == "Subsidiary":
             if is_placeholder:
                 formula_str += '"Friday Media Group (Consolidated)"'
             else:
@@ -303,62 +255,59 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     formula_str += '"Friday Media Group (Consolidated)"'
         # Handle From Period and To Period
         elif field in ["From Period", "To Period"]:
-            if is_placeholder or (isinstance(value, str) and "current month" in value.lower()):
-                # Get current month and year
-                current_date = datetime.now()
-                current_month_year = current_date.strftime("%b %Y")
-                formula_str += f'"{current_month_year}"'
-            elif isinstance(value, str) and "last month" in value.lower():
-                # Get last month and year
-                current_date = datetime.now()
-                last_month = current_date.replace(day=1) - timedelta(days=1)
-                last_month_year = last_month.strftime("%b %Y")
-                formula_str += f'"{last_month_year}"'
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value.capitalize()}"'  # Ensure proper capitalization
-                else:
-                    # Get current month and year as default
-                    current_month_year = datetime.now().strftime("%b %Y")
-                    formula_str += f'"{current_month_year}"'
-
-        
-        # Handle Account Name with hard-coded value
-        elif field == "Account Name":
-            if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
-                formula_str += '"*"'  # Output * for [account_name], [account_number], or account_name
+            if is_placeholder:
+                formula_str += '"Current month"'
             else:
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
                 if value:
                     formula_str += f'"{value}"'
                 else:
-                    formula_str += '"Accounts Receivable"'  # Hard-code Accounts Receivable
+                    formula_str += '"Current month"'
+        # Handle high/low specifically
+        elif field == "high/low":
+            if clean_value in ['high', 'low']:
+                formula_str += f'"{clean_value}"'
+            elif is_placeholder:
+                formula_str += '"high/low"'
+            else:
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value:
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"high/low"'
+        # Handle Limit of record
+        elif field == "Limit of record":
+            if clean_value.isdigit():
+                formula_str += f'"{clean_value}"'
+            elif is_placeholder:
+                formula_str += '"10"'
+            else:
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                if value.isdigit():
+                    formula_str += f'"{value}"'
+                else:
+                    formula_str += '"10"'
         # Handle other fields
         elif is_placeholder:
-            # Force asterisk for Account Name if [account_name] was in the original formula
-            if field == "Account Name" and has_account_name_placeholder:
-                formula_str += '"*"'  # Output * for validation
-            elif field in asterisk_fields:
+            if field in asterisk_fields:
                 formula_str += '"*"'
             else:
-                # For non-asterisk placeholder fields, output empty string to ensure comma
-                formula_str += '""'
+                pass  # Outputs just a comma
         else:
             value = re.sub(r'[{}"\'\[\]]', '', value).strip()
             if value.startswith('[') and value.endswith(']'):
                 value = value[1:-1]
                 values = [v.strip().strip('"').strip("'") for v in value.split(',') if v.strip()]
                 if values:
-                    formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
+                    formula_str += f'[{", ".join(f"\"{v}\"" for v in values)}]'
                 else:
                     if field in asterisk_fields:
                         formula_str += '"*"'
                     else:
-                        formula_str += '""'
+                        pass
             else:
-                # Handle Budget category
-                if field == "Budget category":
+                # Handle Budget_Category
+                if field == "Budget_Category":
                     if is_placeholder:
                         formula_str += '"Standard Budget"'
                     else:
@@ -367,12 +316,10 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                             formula_str += f'"{value}"'
                         else:
                             formula_str += '"Standard Budget"'
-                elif value:
+                if value:
                     formula_str += f'"{value}"'
                 elif field in asterisk_fields:
                     formula_str += '"*"'
-                else:
-                    formula_str += '""'
 
         # Add comma if not the last parameter
         if i < len(ordered_fields) - 1:
@@ -389,58 +336,73 @@ if 'gpt_key' not in st.session_state:
 if 'has_valid_api_key' not in st.session_state:
     st.session_state.has_valid_api_key = bool(st.session_state.gpt_key)
 if 'system_prompt' not in st.session_state:
-    st.session_state.system_prompt = """
-        You are SuiteAI.
+    st.session_state.system_prompt = """You are a NetSuite formula classification AI that maps user questions to the correct formula type and identifies key labeled inputs from the query. Respond ONLY in the following JSON format: 
 
-        Instructions:
-        - Return exactly one valid SuiteReport formula if the user's request matches a formula.
-        - Supported formulas (strictly with required argument structure only):
-        - SUITEGEN({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEGENREP({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITECUS({Subsidiary}, [Customer], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        - SUITEVEN({Subsidiary}, [Vendor], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        - SUITEBUD({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEBUDREP({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEVAR({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        - SUITEREC({EntityType})
+{ 
+  "formula": "<formula_name>", 
+  "inputs": { 
+    "<input_key_1>": "<input_value_1>", 
+    "<input_key_2>": "<input_value_2>", 
+    ... 
+  } 
+} 
 
-        Formula Purposes:
-        - SUITEGEN → Fetch general ledger/account aggregated totals, spend, and balances.
-        - SUITEGENREP → Fetch detailed transaction lists or summary reports for general ledger/accounts.
-        - SUITECUS → Fetch customer transactions or customer invoices.
-        - SUITEVEN → Fetch vendor transactions or vendor invoices.
-        - SUITEBUD → Fetch budgeted account totals, spend, and balances (month-wise).
-        - SUITEBUDREP → Fetch detailed or summary reports for budgeted accounts.
-        - SUITEVAR → Perform actual vs budget variance analysis.
-        - SUITEREC → SUITEREC → Fetch master lists of entity records such as customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories.
+Here are the valid formula types and their descriptions: 
+- suitecus: Customer Number/Name in Customer Transactional Data 
+- suitegen: GL Account Number/Name in Actual GL Transaction Balance 
+- suiteven: Vendor Number/Name in Vendor Transactional Data 
+- suitebud: GL Account Number/Name in Budget Balance 
+- suitegenrep: Actual transaction report 
+- suitebudrep: Actual budget transaction report 
+- suitevar: Actual vs Budget comparisons 
+- suiterec: Record lookup (Customer, Vendor, Subsidiary, Class, AccountType, Location, Department, Employee, BudgetCategory, AccountNumber, accountsearchdisplayname etc) 
 
-        - Strictly follow the required argument sequence and argument count for each formula. Do not add or remove arguments.
-        - Use {} for dynamic single values, [] for dynamic multiple selections, and "" for fixed literal values.
-        - If a field is optional and not provided, leave a placeholder.
-        - If the prompt cannot map to a valid formula, politely guide the user without inventing a formula.
-        - If returning a formula, output only the formula — do not include any explanation, summary, or extra text.
-    """
+Only extract clearly stated input values. Examples of input labels include: "subsidiary", "department", "class", "account", "customer", "vendor", "start_date", "end_date", "record_type". 
+
+Always respond with lowercase formula names and input keys. Do not include any explanations or text before or after the JSON."""
+
+# Formula patterns for substitution
+FORMULA_PATTERNS = { 
+    "suitecus": 'SUITECUS("Subsidiary",{"Customer"},"From Period","To Period",{"Account"},{"Class"}, "high/low", "Limit of record")', 
+    "suitegen": 'SUITEGEN("Subsidiary",{"Account"},"From Period","To Period",{"Class"},{"Department"},{"Location"})', 
+    "suiterec": 'SUITEREC("TABLE_NAME")', 
+    "suiteven": 'SUITEVEN("Subsidiary",{"Vendor"},"From Period","To Period",{"Account"},{"Class"}, "high/low", "Limit of record")', 
+    "suitebud": 'SUITEBUD("Subsidiary","Budget category",{"Account"},"From Period","To Period",{"Class"},{"Department"},{"Location"})', 
+    "suitegenrep": 'SUITEGENREP("Subsidiary",{"Account"},"From Period","To Period",{"Class"},{"Department"},{"Location"})', 
+    "suitebudrep": 'SUITEBUDREP("Subsidiary","Budget category",{"Account"},"From Period","To Period",{"Class"},{"Department"},{"Location"})', 
+    "suitevar": 'SUITEVAR("Subsidiary","Budget category",{"Account"},"From Period","To Period",{"Class"},{"Department"},{"Location"})' 
+}
+
+# Formula substitution function
+def build_formula_string(formula_key, inputs):
+    pattern = FORMULA_PATTERNS.get(formula_key)
+    if not pattern:
+        return "Unknown formula type"
+
+    result = pattern
+
+    replace_map = {
+        "Subsidiary": inputs.get("subsidiary", "*"),
+        "Customer": inputs.get("customer", "*"),
+        "Vendor": inputs.get("vendor", "*"),
+        "Account": inputs.get("account", "*"),
+        "Class": inputs.get("class", "*"),
+        "Department": inputs.get("department", "*"),
+        "Location": inputs.get("location", "*"),
+        "Budget category": inputs.get("budget category", "*"),
+        "From Period": inputs.get("from period", inputs.get("start_date", inputs.get("period", "Start"))),
+        "To Period": inputs.get("to period", inputs.get("end_date", inputs.get("period", "End"))),
+        "TABLE_NAME": inputs.get("record_type", "list"),
+    }
+
+    for key, value in replace_map.items():
+        result = result.replace(f'"{key}"', f'"{value}"')
+
+    return result
 
 # Initialize session state for chat history
 if 'messages' not in st.session_state:
     st.session_state.messages = []
-
-# Add this near the top of your file, after the imports
-def add_custom_css():
-    st.markdown("""
-    <style>
-    .main {
-        overflow-y: auto;
-        max-height: 100vh;
-    }
-    .stApp {
-        height: 100vh;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Call this function before your UI code
-add_custom_css()
 
 # Streamlit UI
 st.title("Netsuite Formula Generator Chat")
@@ -526,10 +488,11 @@ if query and st.session_state.has_valid_api_key:
 
         content = response.choices[0].message.content
         # Check if content exists before calling strip()
-        formula = content.strip() if content else ""
-        # Replace [account_name] or account_name with [*] in GPT response for SUITECUS
+        data = json.loads(content)
+        raw_gpt_response = content  # Store the raw JSON response
 
-        formula = re.sub(r'\[account\]|account', '[*]', formula, flags=re.IGNORECASE)
+        formula = build_formula_string(data["formula"], data["inputs"])
+        # formula = content.strip() if content else ""
         parsed = parse_formula_to_intent(formula)
 
         # Check if there was an error in parsing
@@ -539,6 +502,7 @@ if query and st.session_state.has_valid_api_key:
                 "role": "assistant",
                 "content": "Here's the GPT response:",
                 "formula": formula,
+                "gpt_response": raw_gpt_response,  # Store the raw GPT response
                 "normalized_query": normalized_query
             })
             with st.chat_message("assistant"):
@@ -546,26 +510,16 @@ if query and st.session_state.has_valid_api_key:
                 st.markdown("**Normalized Query:**")
                 st.code(normalized_query, language="text")
 
-                # Display GPT Response
-                st.markdown("**GPT Response:**")
+                # Display GPT Response (JSON)
+                st.markdown("**GPT Response (JSON):**")
+                st.code(raw_gpt_response, language="json")
+                
+                # Display Formula
+                st.markdown("**Formula:**")
                 st.code(formula, language="text")
         else:
             validated = validate_intent_fields_v2(parsed["intent"])
-            # Replace [account_name], account_name, or [*] with "*" in validated intent for Account Name
-            if 'Account Name' in validated['validated_intent'] and (
-                validated['validated_intent']['Account Name'].lower() in ['[account_name]', 'account_name', '[*]']
-            ):
-            
-                if parsed["formula_type"] != "SUITEREC":
-                    validated['validated_intent']['Account Name'] = '"*"'
-
-            # Generate the final formula
-            regenerated_formula = generate_formula_from_intent(
-                parsed["formula_type"],
-                validated["validated_intent"],
-                formula_mapping,
-                has_account_name_placeholder=bool(parsed.get("has_account_name_placeholder", False))
-            )
+            regenerated_formula = generate_formula_from_intent(parsed["formula_type"], validated["validated_intent"], formula_mapping)
 
             if content:
                 # Add assistant message to chat
@@ -573,6 +527,7 @@ if query and st.session_state.has_valid_api_key:
                     "role": "assistant",
                     "content": "Here's the formula you requested:",
                     "formula": formula,
+                    "gpt_response": raw_gpt_response,  # Store the raw GPT response
                     "normalized_query": normalized_query,
                     "intent_map": parsed,
                     "validated": validated,
@@ -583,13 +538,17 @@ if query and st.session_state.has_valid_api_key:
                     st.markdown("**Normalized Query:**")
                     st.code(normalized_query, language="text")
 
-                    # Display GPT Response
-                    st.markdown("**GPT Response:**")
+                    # Display GPT Response (JSON)
+                    st.markdown("**GPT Response (JSON):**")
+                    st.code(raw_gpt_response, language="json")
+                    
+                    # Display Formula
+                    st.markdown("**Formula:**")
                     st.code(formula, language="text")
 
                     # Display Validation Results
                     st.markdown("**Validation Results:**")
-                    st.code(str(validated), language="text")
+                    st.code(validated, language="text")
 
                     # Display Regenerated Formula
                     st.markdown("**Final Formula:**")
@@ -603,7 +562,7 @@ if query and st.session_state.has_valid_api_key:
 if st.session_state.messages:
     if st.button("Copy Chat History"):
         chat_history = "\n\n".join(
-            f"{msg['role'].upper()}: {msg['content']}\nNormalized Query: {msg.get('normalized_query', '')}\nGPT Response: {msg.get('formula', '')}\nValidation Results: {msg.get('validated', '')}\nFinal Formula: {msg.get('regenerated_formula', '')}"
+            f"{msg['role'].upper()}: {msg['content']}\nNormalized Query: {msg.get('normalized_query', '')}\nGPT Response (JSON): {msg.get('gpt_response', '')}\nFormula: {msg.get('formula', '')}\nValidation Results: {msg.get('validated', '')}\nFinal Formula: {msg.get('regenerated_formula', '')}"
             for msg in st.session_state.messages
         )
         st.toast("Chat history copied to clipboard!")
@@ -613,6 +572,4 @@ if st.session_state.messages:
 if st.session_state.messages:
     if st.button("Clear Chat"):
         st.session_state.messages = []
-        st.rerun()
-
-
+        st.experimental_rerun()

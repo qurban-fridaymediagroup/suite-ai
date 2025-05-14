@@ -11,3 +11,4 @@ __pycache__
 *.iml
 *.ipynb_checkpoints
 *.pytest_cache
+*.pkl

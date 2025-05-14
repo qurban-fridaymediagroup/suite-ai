@@ -3,3 +3,5 @@ openai
 python-dotenv
 fuzzywuzzy
 python-Levenshtein
+pinecone-client>=2.2.1
+pinecone>=2.2.1

@@ -7,22 +7,23 @@ normalisation_dict = {
     'subsid.': 'Subsidiary', 'subsidiary company': 'Subsidiary', 'affiliate': 'Subsidiary',
     'child company': 'Subsidiary', 'satellite branch': 'Subsidiary', 'sub comp': 'Subsidiary',
     'sub co': 'Subsidiary', 'affiliate branch': 'Subsidiary', 'subcompany': 'Subsidiary',
+    'your_subsidiary': 'Subsidiary', 'your subsidiary': 'Subsidiary',
 
     # Account Number
-    'account number': 'Account_Number', 'acount number': 'Account_Number',
-    'accout number': 'Account_Number', 'accont number': 'Account_Number',
-    'acoount no': 'Account_Number', 'account numbers': 'Account_Number', 
-    'acc no': 'Account_Number', 'a/c no': 'Account_Number', 'acc#': 'Account_Number',
-    'acct no': 'Account_Number', 'ac no': 'Account_Number', 'account id': 'Account_Number',
-    'gl no': 'Account_Number', 'ledger id': 'Account_Number', 'ledger number': 'Account_Number',
-    'gl acc no': 'Account_Number', 'acc id': 'Account_Number',
+    'account number': 'Account', 'acount number': 'Account',
+    'accout number': 'Account', 'accont number': 'Account',
+    'acoount no': 'Account', 'account numbers': 'Account',
+    'acc no': 'Account', 'a/c no': 'Account', 'acc#': 'Account', 'a#': 'Account',
+    'acct no': 'Account', 'ac no': 'Account', 'account id': 'Account',
+    'gl no': 'Account', 'ledger id': 'Account', 'ledger number': 'Account',
+    'gl acc no': 'Account', 'acc id': 'Account_Number',
 
     # Account Name
-    'account name': 'Account_Name', 'acount name': 'Account_Name',
-    'accnt name': 'Account_Name', 'accont name': 'Account_Name','a / c': 'Account_Name',
-    'acc name': 'Account_Name', 'a/c name': 'Account_Name', 'acct name': 'Account_Name',
-    'ledger account': 'Account_Name', 'gl account name': 'Account_Name',
-    'ledger acc name': 'Account_Name', 'gl name': 'Account_Name',
+    'account name': 'Account', 'acount name': 'Account',
+    'accnt name': 'Account', 'accont name': 'Account','a / c': 'Account',
+    'acc name': 'Account', 'a/c name': 'Account', 'acct name': 'Account',
+    'ledger account': 'Account', 'gl account name': 'Account',
+    'ledger acc name': 'Account', 'gl name': 'Account',
 
     # From Period
     'from period': 'From_Period', 'frm period': 'From_Period', 'from peroid': 'From_Period',
@@ -37,20 +38,20 @@ normalisation_dict = {
     'end per': 'To_Period', 'ending period': 'To_Period', 'closing period': 'To_Period',
     'end date': 'To_Period', 'till date': 'To_Period',
 
-    # Classification
-    'classification': 'Classification', 'classfication': 'Classification',
-    'clssfication': 'Classification', 'classifcation': 'Classification',
-    'cls': 'Classification', 'clss': 'Classification', 'cat cls': 'Classification',
-    'category': 'Classification', 'type': 'Classification', 'division': 'Classification',
-    'brand': 'Classification', 'brnd': 'Classification', 'dept class': 'Classification',
-    'grp class': 'Classification', 'cat class': 'Classification',
+    # Class
+    'classification': 'Class', 'classfication': 'Class',
+    'clssfication': 'Class', 'classifcation': 'Class',
+    'cls': 'Class', 'clss': 'Class', 'cat cls': 'Class',
+    'category': 'Class', 'type': 'Class',
+    'brand': 'Class', 'brnd': 'Class', 'class': 'Class',
+    'grp class': 'Class', 'cat class': 'Class',
 
     # Department
     'department': 'Department', 'deprtment': 'Department', 'departmnt': 'Department',
-    'deparment': 'Department', 'depertment': 'Department', 'dept': 'Department',
+    'deparment': 'Department', 'depertment': 'Department',
     'dep': 'Department', 'dpmt': 'Department', 'unit': 'Department',
     'branch office': 'Department', 'section': 'Department', 'dept id': 'Department',
-    'department id': 'Department', 'dept code': 'Department',
+    'department id': 'Department', 'dept': 'Department', 'division': 'Department',
 
     # Location
     'location': 'Location', 'locaiton': 'Location', 'locaton': 'Location',
@@ -61,19 +62,19 @@ normalisation_dict = {
     'site office': 'Location', 'loc id': 'Location', 'loc code': 'Location',
 
     # Customer Number
-    'customer number': 'Customer_Number', 'custmer number': 'Customer_Number',
-    'custmor no': 'Customer_Number', 'customeer id': 'Customer_Number',
-    'cust no': 'Customer_Number', 'cust id': 'Customer_Number', 'cstm no': 'Customer_Number',
-    'cust num': 'Customer_Number', 'client number': 'Customer_Number', 'buyer number': 'Customer_Number',
-    'cust#': 'Customer_Number', 'cstm id': 'Customer_Number', 'customer#': 'Customer_Number',
+    'customer number': 'Customer', 'custmer number': 'Customer',
+    'custmor no': 'Customer', 'customeer id': 'Customer',
+    'cust no': 'Customer', 'cust id': 'Customer', 'cstm no': 'Customer',
+    'cust num': 'Customer', 'client number': 'Customer', 'buyer number': 'Customer',
+    'cust#': 'Customer', 'cstm id': 'Customer', 'customer#': 'Customer',
 
     # Vendor Name
-    'vendor name': 'Vendor_Name', 'vendor': 'Vendor_Name', 'vedor name': 'Vendor_Name',
-    'vendr name': 'Vendor_Name', 'vendorr': 'Vendor_Name', 'supp': 'Vendor_Name',
-    'supp name': 'Vendor_Name', 'sup': 'Vendor_Name', 'sup name': 'Vendor_Name',
-    'vend name': 'Vendor_Name', 'vndr name': 'Vendor_Name', 'supplier name': 'Vendor_Name',
-    'provider name': 'Vendor_Name', 'merchant name': 'Vendor_Name',
-    'vendor acc': 'Vendor_Name', 'vend acc': 'Vendor_Name', 'supplier acc': 'Vendor_Name',
+    'vendor name': 'Vendor', 'vendor': 'Vendor', 'vedor name': 'Vendor',
+    'vendr name': 'Vendor', 'vendorr': 'Vendor', 'supp': 'Vendor',
+    'supp name': 'Vendor', 'sup': 'Vendor', 'sup name': 'Vendor',
+    'vend name': 'Vendor', 'vndr name': 'Vendor', 'supplier name': 'Vendor',
+    'provider name': 'Vendor', 'merchant name': 'Vendor',
+    'vendor acc': 'Vendor', 'vend acc': 'Vendor', 'supplier acc': 'Vendor',
 
     # Budget Category
     'budget category': 'Budget_Category', 'bdgt catgory': 'Budget_Category',
@@ -85,12 +86,12 @@ normalisation_dict = {
 }
 
 formula_mapping = {
-    "SUITEGEN": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEGEN": ["Subsidiary", "Account Number", "From Period", "To Period", "Class", "Department", "Location"],
     "SUITECUS": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Number", "Class", "high/low", "Limit of record"],
-    "SUITEGENREP": ["Subsidiary", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEGENREP": ["Subsidiary", "Account Number", "From Period", "To Period", "Class", "Department", "Location"],
     "SUITEREC": ["TABLE_NAME"],
-    "SUITEBUD": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEBUDREP": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVAR": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Classification", "Department", "Location"],
+    "SUITEBUD": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Class", "Department", "Location"],
+    "SUITEBUDREP": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Class", "Department", "Location"],
+    "SUITEVAR": ["Subsidiary", "Budget category", "Account Number", "From Period", "To Period", "Class", "Department", "Location"],
     "SUITEVEN": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"]
 }

@@ -38,6 +38,7 @@ A powerful Streamlit-based application that provides an intelligent interface fo
 
 1. Start the Streamlit application:
    ```bash
+   source venv/bin/activate
    streamlit run suiteai.py
    ```
 
