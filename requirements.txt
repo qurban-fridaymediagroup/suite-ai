@@ -7,3 +7,6 @@ sentence-transformers
 scikit-learn
 numpy
 pandas
+torch
+torchvision
+torchaudio

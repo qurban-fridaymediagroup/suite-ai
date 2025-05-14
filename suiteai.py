@@ -10,10 +10,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from datetime import datetime
 from pinecone import Pinecone, ServerlessSpec
-
 # Load environment variables
 load_dotenv()
-
 # Get API key and model from environment variables
 api_key = os.getenv("OPENAI_API_KEY")
 model = os.getenv("OPENAI_MODEL")
@@ -22,7 +20,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "suiteai-index"
 if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=768, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+    pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
 index = pc.Index(index_name)
 
 # Initialize SentenceTransformer model
@@ -32,7 +30,8 @@ sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
 def fetch_normalization_dict():
     dictionary_keys = []
     dictionary_embeddings = []
-    results = index.query(vector=[0] * 768, top_k=1000, filter={"field": {"$in": list(normalisation_dict.keys())}})
+    # Change this line
+    results = index.query(vector=[0] * 1536, top_k=1000, filter={"field": {"$in": list(normalisation_dict.keys())}})  # Changed from 768 to 1536
     for match in results.matches:
         value = match.metadata.get("value")
         if value:

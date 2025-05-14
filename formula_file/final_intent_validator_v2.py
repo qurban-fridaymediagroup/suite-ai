@@ -8,8 +8,7 @@ from rapidfuzz import process, fuzz
 from dotenv import load_dotenv
 # Add this import at the top with the other Pinecone imports
 import pinecone
-# Load environment variables
-# Load environment variables
+# Load environment variables from .env file``
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
@@ -18,7 +17,7 @@ from pinecone import Pinecone, ServerlessSpec
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "suiteai-index"
 if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=768, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+    pc.create_index(name=index_name, dimension=1536, metric="cosine", spec=ServerlessSpec(cloud="aws", region="us-east-1"))
 index = pc.Index(index_name)
 
 # Initialize canonical values
@@ -47,96 +46,25 @@ column_variations = {
     'Vendor Name': ['Vendor Name', 'Vendor_Name', 'Vend_Name', 'Vendor', 'Vendors'],
     'Class': ['Class', 'Classes', 'Clas']
 }
-
 # Load data into Pinecone (assuming data is preprocessed and embedded)
+# Change this line in load_data_to_pinecone function
 def load_data_to_pinecone():
     # Simulated data loading (replace with actual embedding logic)
     for field in expected_fields:
         field_lower = field.lower()
         values = canonical_values.get(field_lower, set())
         for i, value in enumerate(values):
-            vector = [0.1 * i] * 768  # Placeholder embedding
+            vector = [0.1 * i] * 1536  # Changed from 768 to 1536
             index.upsert([(f"{field_lower}_{i}", vector, {"value": value, "field": field_lower})])
 
-# Populate canonical values from Pinecone
+# Change this line in fetch_canonical_values function
 def fetch_canonical_values():
     for field in expected_fields:
         field_lower = field.lower()
-        results = index.query(vector=[0] * 768, top_k=1000, filter={"field": field_lower})
+        results = index.query(vector=[0] * 1536, top_k=1000, filter={"field": field_lower})  # Changed from 768 to 1536
         canonical_values[field_lower].update([match.metadata["value"] for match in results.matches])
 
-# Load initial data
-load_data_to_pinecone()
-fetch_canonical_values()
-
-# Fuzzy match column names
-column_mapping = {}
-csv_columns = expected_fields  # Use expected fields as column names
-for expected_col, variations in column_variations.items():
-    best_match = None
-    best_score = 0
-    for variation in variations:
-        match, score, _ = process.extractOne(variation.lower(), csv_columns, scorer=fuzz.WRatio)
-        if score > best_score and score >= 80:
-            best_match = match
-            best_score = score
-    if best_match:
-        column_mapping[expected_col.lower()] = best_match
-    else:
-        column_mapping[expected_col.lower()] = expected_col
-
-# Convert sets to sorted lists
-for col in canonical_values:
-    canonical_values[col] = sorted(list(canonical_values[col]))
-
-# Field placeholder formatting rules
-field_format_map = {
-    "Subsidiary": "Subsidiary",
-    "Budget category": '"Budget category"',
-    "Account Number": '{"Account Number"}',
-    "Account Name": '{"Account Name"}',
-    "From Period": '"From Period"',
-    "To Period": '"To Period"',
-    "Classification": '{"Classification"}',
-    "Department": '{"Department"}',
-    "Location": '{"Location"}',
-    "Customer Number": '{"Customer Number"}',
-    "Customer Name": '{"Customer Name"}',
-    "Vendor Name": '{"Vendor Name"}',
-    "Vendor Number": '{"Vendor Number"}',
-    "Class": '{"Class"}',
-    "high/low": '"high/low"',
-    "Limit of record": '"Limit of record"',
-    "TABLE_NAME": '"TABLE_NAME"'
-}
-
-placeholder_keys = list(field_format_map.keys())
-
-# Define formula mappings with correct parameter sequences
-formula_mapping = {
-    "SUITEGEN": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITECUS": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEGENREP": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEREC": ["TABLE_NAME"],
-    "SUITEBUD": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEBUDREP": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVAR": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVEN": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"]
-}
-
-# Extended formula mappings with variations
-extended_formula_mapping = {
-    "SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME": ["Subsidiary", "Customer Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME": ["Subsidiary", "Customer Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEGEN_ACCOUNT_NAME": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVEN_VENDOR_NAME_ACCOUNT_NAME": ["Subsidiary", "Vendor Name", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME": ["Subsidiary", "Vendor Number", "From Period", "To Period", "Account Name", "Class", "high/low", "Limit of record"],
-    "SUITEBUD_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEGENREP_ACCOUNT_NAME": ["Subsidiary", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEBUDREP_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"],
-    "SUITEVAR_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period", "Classification", "Department", "Location"]
-}
-
+# Change this line in pinecone_search function
 def pinecone_search(input_val, possible_vals, field_name=None):
     """Perform similarity search using Pinecone."""
     if not input_val:
@@ -162,7 +90,7 @@ def pinecone_search(input_val, possible_vals, field_name=None):
     threshold = field_thresholds.get(field_name, 0.85)
     
     # Simulate embedding for query (replace with actual embedding model)
-    query_vector = [0.1] * 768  # Placeholder embedding
+    query_vector = [0.1] * 1536  # Changed from 768 to 1536
     
     # Exact match check
     results = index.query(query_vector, top_k=1, filter={"field": field_name.lower(), "value": input_val})
