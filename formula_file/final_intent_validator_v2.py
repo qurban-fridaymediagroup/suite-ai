@@ -179,10 +179,10 @@ def get_formula_template(formula_type, intent_dict):
                 return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME"]
             return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
 
-        elif formula_type == "SUITEGEN":
+        elif formula_type == "SUITEGEN" or formula_type == "SUITEGENREP":
             account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
             has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping["SUITEGEN_ACCOUNT_NAME"]
+            return extended_formula_mapping[f"{formula_type}_ACCOUNT_NAME"]
 
         elif formula_type == "SUITEVEN":
             vendor_number = intent_dict.get("Vendor Number", "")
@@ -199,25 +199,10 @@ def get_formula_template(formula_type, intent_dict):
                 return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME"]
             return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
 
-        elif formula_type == "SUITEBUD":
+        elif formula_type == "SUITEBUD" or formula_type == "SUITEBUDREP" or formula_type == "SUITEVAR":
             account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
             has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping["SUITEBUD_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEGENREP":
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-            has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping["SUITEGENREP_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEBUDREP":
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-            has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping["SUITEBUDREP_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEVAR":
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-            has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping["SUITEVAR_ACCOUNT_NAME"]
+            return extended_formula_mapping[f"{formula_type}_ACCOUNT_NAME"]
 
         return formula_mapping.get(formula_type, [])
     except Exception as e:
@@ -238,7 +223,7 @@ def format_formula_with_intent(formula_type, intent_dict):
         # Get current month and year
         # Format current month in 3-letter abbreviation (e.g. "Apr 2025")
         current_month_year = datetime.now().strftime("%b %Y") 
-        
+
         params = []
         for field in template:
             value = intent_dict.get(field, "").strip()
@@ -397,28 +382,59 @@ def format_placeholder(value):
     return value if isinstance(value, str) else str(value)
 
 def best_partial_match(input_val, possible_vals, field_name=None):
-    """Find the best partial match for a value using difflib.get_close_matches."""
+    """
+    Find the best partial match for a value using wildcard-based matching (like SQL's '%word%').
+    If multiple matches are found, use fuzzy matching to select the best one.
+    For Account Name and Account Number, search in both columns.
+    """
     if not input_val or not possible_vals:
         return None
 
     input_val = input_val.strip().lower()
+
+    # For Account Name or Account Number, merge the search space
+    if field_name in ["Account Name", "Account Number"]:
+        # Get values from both account name and account number columns
+        account_name_vals = canonical_values.get('account name', [])
+        account_number_vals = canonical_values.get('account number', [])
+
+        # Merge the values (use a set to avoid duplicates)
+        merged_vals = list(set(account_name_vals + account_number_vals))
+
+        # If we have merged values, use them instead of the provided possible_vals
+        if merged_vals:
+            possible_vals = merged_vals
+
     # Check for exact match first
     for val in possible_vals:
         if input_val == val.lower():
             return val
 
-    # Use difflib.get_close_matches for fuzzy matching
+    # Use wildcard-based matching (like SQL's '%word%')
+    # Find all values that contain the input value
+    wildcard_matches = [val for val in possible_vals if input_val in val.lower()]
+
+    if wildcard_matches:
+        # If multiple matches, use fuzzy matching to find the best one
+        if len(wildcard_matches) > 1:
+            matches = get_close_matches(input_val, wildcard_matches, n=1, cutoff=0.6)
+            if matches:
+                return matches[0]
+        # If only one match, return it
+        return wildcard_matches[0]
+
+    # If no wildcard matches, try fuzzy matching as fallback
     matches = get_close_matches(input_val, possible_vals, n=1, cutoff=0.6)
     if matches:
         return matches[0]
 
-    # Handle travel aliases for Account Name
-    if field_name in ["Account Name", "Account Number"]:
-        travel_aliases = ["travel", "trav", "expense", "exp"]
-        if input_val in travel_aliases:
-            travel_matches = [val for val in possible_vals if "travel" in val.lower()]
-            if travel_matches:
-                return travel_matches[0]
+    # # Handle travel aliases for Account Name
+    # if field_name in ["Account Name", "Account Number"]:
+    #     travel_aliases = ["travel", "trav", "expense", "exp"]
+    #     if input_val in travel_aliases:
+    #         travel_matches = [val for val in possible_vals if "travel" in val.lower()]
+    #         if travel_matches:
+    #             return travel_matches[0]
 
     return None
 
@@ -439,13 +455,14 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         # Define strict placeholder values to preserve
         placeholder_values = [
             'subsidiary', 'classification', 'class', 'department', 'location',
-            'currency', 'account number', 'account name',
-            'customer number', 'customer name', 'vendor number', 'vendor name',
+            'currency', 'account number', 'account name', 'account', 'customer'
+            'customer number', 'customer name', 'vendor number', 'vendor name','vendor',
             'from period', 'to period', 'high/low', 'limit of record', 'table_name'
         ]
 
         # Handle other fields
         for key, value in intent_dict.items():
+
             is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
             clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
 
@@ -520,9 +537,19 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             canonical_col = unified_columns.get(key, key).lower()
             possible_values = canonical_values.get(canonical_col, [])
 
-            if key == "Account Number":
-                canonical_col = 'account name'  # Always match Account Number against Account Name column
-                possible_values = canonical_values.get(canonical_col, [])
+            # For Account Name or Account Number, merge the search space
+            if key in ["Account Name", "Account Number"]:
+                # Get values from both account name and account number columns
+                account_name_vals = canonical_values.get('account name', [])
+                account_number_vals = canonical_values.get('account number', [])
+
+                # Merge the values (use a set to avoid duplicates)
+                merged_vals = list(set(account_name_vals + account_number_vals))
+
+                # If we have merged values, use them instead
+                if merged_vals:
+                    possible_values = merged_vals
+
 
             if key.lower() == "high/low":
                 if original_query.lower().find("lowest") != -1:
@@ -560,8 +587,23 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
             if clean_val in possible_values:
                 mapped_col = column_mapping.get(canonical_col, canonical_col)
                 if mapped_col in netsuite_df.columns:
-                    matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                    if v.strip().lower() == clean_val), clean_val)
+                    # Find all values that contain the clean_val (like SQL's '%word%')
+                    matches = [v for v in netsuite_df[mapped_col].dropna().astype(str)
+                              if clean_val in v.strip().lower()]
+
+                    if matches:
+                        # If multiple matches, use fuzzy matching to find the best one
+                        if len(matches) > 1:
+                            from rapidfuzz import process, fuzz
+                            best_match, _, _ = process.extractOne(clean_val, matches, scorer=fuzz.WRatio)
+                            matched = best_match
+                        else:
+                            matched = matches[0]
+                    else:
+                        # If no wildcard matches, fall back to exact match
+                        matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                      if v.strip().lower() == clean_val), clean_val)
+
                     validated[key] = f'"{matched}"'
                     notes[key] = "Exact match"
                 else:
@@ -573,8 +615,23 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                 if partial:
                     mapped_col = column_mapping.get(canonical_col, canonical_col)
                     if mapped_col in netsuite_df.columns:
-                        matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                        if v.strip().lower() == partial), partial)
+                        # Find all values that contain the partial match (like SQL's '%word%')
+                        matches = [v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                  if partial.lower() in v.strip().lower()]
+
+                        if matches:
+                            # If multiple matches, use fuzzy matching to find the best one
+                            if len(matches) > 1:
+                                from rapidfuzz import process, fuzz
+                                best_match, _, _ = process.extractOne(partial, matches, scorer=fuzz.WRatio)
+                                matched = best_match
+                            else:
+                                matched = matches[0]
+                        else:
+                            # If no wildcard matches, fall back to exact match
+                            matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                          if v.strip().lower() == partial), partial)
+
                         validated[key] = f'"{matched}"'
                         notes[key] = "Partial match"
                     else:
@@ -619,21 +676,6 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
     Apply fuzzy matching to correct values in validated intent against canonical values.
     """
     corrected_intent = {}
-    field_thresholds = {
-        "Subsidiary": 70,
-        "Classification": 75,
-        "Class": 75,
-        "Department": 75,
-        "Location": 80,
-        "Budget category": 75,
-        "Currency": 80,
-        "Account Number": 80,
-        "Account Name": 80,
-        "Customer Number": 75,
-        "Customer Name": 80,
-        "Vendor Number": 80,
-        "Vendor Name": 80
-    }
 
     placeholder_values = [
         'subsidiary', 'classification', 'class', 'department', 'location',
@@ -643,7 +685,7 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
     ]
 
     key_fields = [
-        "Location", "Account Name", "Budget category",
+        "Location", "Account Name", "Account Number", "Budget category",
         "Customer Name", "Customer Number"
     ]
 
@@ -681,9 +723,21 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
 
         canonical_col = unified_columns.get(field, field).lower()
         possible_values = canonical_values.get(canonical_col, [])
-        if field == "Account Number":
-            canonical_col = 'account name'  # Always match Account Number against Account Name column
-            possible_values = canonical_values.get(canonical_col, [])
+
+        # For Account Name or Account Number, merge the search space
+        if field in ["Account Name", "Account Number"]:
+            # Get values from both account name and account number columns
+            account_name_vals = canonical_values.get('account name', [])
+            account_number_vals = canonical_values.get('account number', [])
+
+            # Merge the values (use a set to avoid duplicates)
+            merged_vals = list(set(account_name_vals + account_number_vals))
+
+            # If we have merged values, use them instead
+            if merged_vals:
+                possible_values = merged_vals
+
+
 
         if not possible_values:
             if field == "Budget category":
@@ -695,8 +749,22 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
         if raw in possible_values:
             mapped_col = column_mapping.get(canonical_col, canonical_col)
             if mapped_col in netsuite_df.columns:
-                original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                     if v.strip().lower() == raw), raw)
+                # Find all values that contain the raw value (like SQL's '%word%')
+                matches = [v for v in netsuite_df[mapped_col].dropna().astype(str)
+                          if raw in v.strip().lower()]
+
+                if matches:
+                    # If multiple matches, use fuzzy matching to find the best one
+                    if len(matches) > 1:
+                        from rapidfuzz import process, fuzz
+                        best_match, _, _ = process.extractOne(raw, matches, scorer=fuzz.WRatio)
+                        original_case = best_match
+                    else:
+                        original_case = matches[0]
+                else:
+                    # If no wildcard matches, fall back to exact match
+                    original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                         if v.strip().lower() == raw), raw)
             else:
                 original_case = raw
         else:
@@ -704,8 +772,22 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
             if match:
                 mapped_col = column_mapping.get(canonical_col, canonical_col)
                 if mapped_col in netsuite_df.columns:
-                    original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                         if v.strip().lower() == match), match)
+                    # Find all values that contain the match value (like SQL's '%word%')
+                    matches = [v for v in netsuite_df[mapped_col].dropna().astype(str)
+                              if match.lower() in v.strip().lower()]
+
+                    if matches:
+                        # If multiple matches, use fuzzy matching to find the best one
+                        if len(matches) > 1:
+                            from rapidfuzz import process, fuzz
+                            best_match, _, _ = process.extractOne(match, matches, scorer=fuzz.WRatio)
+                            original_case = best_match
+                        else:
+                            original_case = matches[0]
+                    else:
+                        # If no wildcard matches, fall back to exact match
+                        original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                             if v.strip().lower() == match), match)
                 else:
                     original_case = match
             else:
@@ -717,8 +799,22 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
                     if retry_match:
                         mapped_col = column_mapping.get(canonical_col, canonical_col)
                         if mapped_col in netsuite_df.columns:
-                            original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
-                                                 if v.strip().lower() == retry_match), retry_match)
+                            # Find all values that contain the retry_match value (like SQL's '%word%')
+                            matches = [v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                      if retry_match.lower() in v.strip().lower()]
+
+                            if matches:
+                                # If multiple matches, use fuzzy matching to find the best one
+                                if len(matches) > 1:
+                                    from rapidfuzz import process, fuzz
+                                    best_match, _, _ = process.extractOne(retry_match, matches, scorer=fuzz.WRatio)
+                                    original_case = best_match
+                                else:
+                                    original_case = matches[0]
+                            else:
+                                # If no wildcard matches, fall back to exact match
+                                original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str)
+                                                     if v.strip().lower() == retry_match), retry_match)
                         else:
                             original_case = retry_match
                     else:

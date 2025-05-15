@@ -15,13 +15,13 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 model = os.getenv("OPENAI_MODEL")  
 
-def normalize_prompt(text, threshold=85):
+def normalize_prompt(text):
     """
     Normalize user prompts by expanding abbreviations and standardizing business terms.
     This function:
     1. Expands common abbreviations (acc -> account, loc -> location)
     2. Normalizes business terms to their standard form using the normalization dictionary
-    3. Uses fuzzy matching for misspelled terms
+    3. Uses wildcard-based matching for finding terms (similar to SQL LIKE '%word%')
     4. Preserves common words, numbers, and other non-business terms
     """
     text = text.lower().strip()
@@ -118,16 +118,24 @@ def normalize_prompt(text, threshold=85):
                 len(word) <= 2 or any(c.isdigit() for c in word)):
                 result.append(word)
             else:
-                # Try fuzzy matching for potential business terms
-                match, score, _ = process.extractOne(word, dictionary_keys, scorer=fuzz.WRatio)
-                if score >= threshold:
-                    # Special case for fuzzy matching "budget"
+                # Use wildcard-based matching (like SQL's '%word%')
+                # Find all dictionary keys that contain the word
+                matches = [key for key in dictionary_keys if word.lower() in key.lower()]
+
+                if matches:
+                    # If multiple matches, use fuzzy matching to find the best one
+                    if len(matches) > 1:
+                        match, _, _ = process.extractOne(word, matches, scorer=fuzz.WRatio)
+                    else:
+                        match = matches[0]
+
+                    # Special case for matching "budget"
                     if match.lower() == "budget" or "budget" in match.lower():
                         result.append("Budget")
-                    # Special case for fuzzy matching "subsistence"
+                    # Special case for matching "subsistence"
                     elif match.lower() == "subsistence" or word.lower() == "subsistence":
                         result.append("Account_Name subsistence")
-                    # Special case for fuzzy matching "subsidiary"
+                    # Special case for matching "subsidiary"
                     elif match.lower() == "subsidiary" and word.lower() == "subsistence":
                         result.append("Account_Name subsistence")
                     else:
@@ -146,12 +154,12 @@ def normalize_prompt(text, threshold=85):
     normalized_text = re.sub(r'\s*([-_])\s*', r'\1', normalized_text)
     # Remove multiple spaces
     normalized_text = re.sub(r'\s+', ' ', normalized_text).strip()
-    
+
     return normalized_text
 
 def parse_formula_to_intent(formula_str: str):
     match = re.match(r'(\w+)\((.*)\)', formula_str)
-    
+
     if not match:
         return {"error": "Invalid formula format."}
 
@@ -161,17 +169,13 @@ def parse_formula_to_intent(formula_str: str):
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
-    
-    print("\n")
-    print("formula_type:", formula_type)
-    print("params:", params)
-    print("\n")
+
     # Create the intent dictionary
     intent_dict = dict(zip(formula_mapping[formula_type], params))
-    
+
     # Check for [account_name] or [account_number] in the formula and mark it for asterisk
     has_account_name_placeholder = '[account_name]' in formula_str.lower() or '[account_number]' in formula_str.lower()
-    
+
     return {
         "formula_type": formula_type,
         "intent": intent_dict,
@@ -323,7 +327,7 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                     current_month_year = datetime.now().strftime("%b %Y")
                     formula_str += f'"{current_month_year}"'
 
-        
+
         # Handle Account Name with hard-coded value
         elif field == "Account Name":
             if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
@@ -391,47 +395,47 @@ if 'has_valid_api_key' not in st.session_state:
 if 'system_prompt' not in st.session_state:
     st.session_state.system_prompt = """
         You are SuiteAI.
- 
+
         Instructions:
         - Return one or more valid SuiteReport formulas depending on the user's intent:
         - Output each formula on a new line. Do not explain or summarise the formula.
-        
+
         ------------------------------------------
-        
+
         Supported formulas (strictly with required argument structure only - Never change or guess them):
-        
+
         - SUITEGEN: Strictly return exactly 7 arguments in exactly below order:
         - SUITEGEN({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        
+
         - SUITEGENREP: Strictly return exactly 7 arguments in exactly below order:
         - SUITEGENREP({Subsidiary}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        
+
         - SUITECUS: Strictly return exactly 8 arguments in exactly below order:
         - SUITECUS({Subsidiary}, [Customer], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        
+
         - SUITEVEN: Strictly return exactly 8 arguments in exactly below order:
         - SUITEVEN({Subsidiary}, [Vendor], {From_Period}, {To_Period}, [Account], [Class], {High_Low}, {Limit_of_Record})
-        
+
         - SUITEBUD: Strictly return exactly 8 arguments in exactly below order:
         - SUITEBUD({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        
+
         - SUITEBUDREP: Strictly return exactly 8 arguments in exactly below order:
         - SUITEBUDREP({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        
+
         - SUITEVAR: Strictly return exactly 8 arguments in exactly below order:
         - SUITEVAR({Subsidiary}, {Budget_Category}, [Account], {From_Period}, {To_Period}, [Class], [Department], [Location])
-        
+
         - SUITEREC: Strictly return exactly 1 argument in exactly below order:
         - SUITEREC({EntityType})
-        
+
         - SUITEREC: Always return exactly 5 arguments in exactly below order:
         - SUITEGENPIV({Subsidiary}, [Account], {From_Period}, {To_Period}, [Grouping and Filtering])
-        
+
         ❗ Always match formulas exactly as shown above. Never guess or create new argument patterns. Only use the exact structure and argument count listed.
         Never ever invent a new formula, or change order, or reduce or increase fields. You must strictly follow the exact formula.
-        
+
         ------------------------------------------
-        
+
         Strict Rules for (SUITEGEN, SUITEGENREP, SUITECUS, SUITEVEN, SUITEBUD, SUITEBUDREP, SUITEVAR, SUITEREC):
         - Follow the required argument sequence and argument count for each formula.
         - Use {} for dynamic single values, [] for dynamic multiple selections, and must put either curly or square bracket with "" just like {""} or [""] for fixed literal values.
@@ -442,11 +446,11 @@ if 'system_prompt' not in st.session_state:
         - Always return SUITEVAR (not SUITEBUD) when prompt implies actual vs budget comparison (e.g., "compare", "variance", "difference", "actual vs budget", "budget vs spend").
         - {High_Low} and {Limit_of_Record} are only valid for SUITECUS and SUITEVEN, not for any other formula.
         - If the prompt cannot map to a valid formula, never invent or fabricate a formula. Instead: Provide NetSuite guidance where appropriate — e.g., explain how the action can be completed using NetSuite’s core functionality.
-        
-        
+
+
         ------------------------------------------
-        
-        
+
+
         Supported formulas purpose:
         - SUITEGEN: Fetch general ledger/account totals, spend, and balances.
         - SUITEGENREP: Fetch general ledger/account transaction lists or summary reports.
@@ -457,12 +461,12 @@ if 'system_prompt' not in st.session_state:
         - SUITEVAR: Perform actual vs budget variance analysis.
         - SUITEREC: Fetch master lists of records (e.g., customers, vendors, subsidiaries, accounts, classes, departments, employees, currencies, and budget categories).
         ------------------------------------------
-        
+
         ⏳ TIME PERIOD INSTRUCTIONS:
-        
+
         - Always preserve the user's original time expressions exactly as stated.
         - Never assume actual dates or modify time phrases like "current month" or "last year".
-        
+
         ✅ Acceptable values (keep as-is):
         - {"current month"}
         - {"last month"}
@@ -472,24 +476,24 @@ if 'system_prompt' not in st.session_state:
         - {"last year"}
         - {"year to date"}
         - {"ytd"}
-        
+
         🗓️ Only convert to date format (e.g. "Jan 2024") **if and only if** the user states the period explicitly in that format.
-        
+
         ✅ Accept only this structure for dates:
         - Month followed by 4-digit year (e.g. "Feb 2024", "Sep 2023")
         - Do not reformat these. Use exactly as entered.
-        
+
         🚫 Do NOT guess or inject specific dates like:
         - "2024-05-01" or "March 1, 2024"
         - Even if user says “this year” or “current month”, DO NOT convert them to date ranges.
         If unsure, keep the exact text (e.g. "current year") as the formula placeholder.
-        
+
         🔁 **If no time period is mentioned in the prompt**, keep default placeholders:
         - {From_Period} and {To_Period}
-        
+
         ------------------------------------------
-        
-        
+
+
     """
 
 # Initialize session state for chat history
@@ -621,12 +625,13 @@ if query and st.session_state.has_valid_api_key:
                 st.markdown("**GPT Response:**")
                 st.code(formula, language="text")
         else:
+            print(parsed["intent"])
             validated = validate_intent_fields_v2(parsed["intent"])
             # Replace [account_name], account_name, or [*] with "*" in validated intent for Account Name
             if 'Account Name' in validated['validated_intent'] and (
                 validated['validated_intent']['Account Name'].lower() in ['[account_name]', 'account_name', '[*]']
             ):
-            
+
                 if parsed["formula_type"] != "SUITEREC":
                     validated['validated_intent']['Account Name'] = '"*"'
 
@@ -685,5 +690,3 @@ if st.session_state.messages:
     if st.button("Clear Chat"):
         st.session_state.messages = []
         st.rerun()
-
-
