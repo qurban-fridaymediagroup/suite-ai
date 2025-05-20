@@ -24,25 +24,25 @@ except Exception as e:
 canonical_values = {col.lower(): set() for col in netsuite_df.columns}
 # Add specific fields expected by the application
 expected_fields = ['Subsidiary', 'Classification', 'Department', 'Location', 'Budget category', 'Currency',
-    'Account Number', 'Account Name', 'Customer Number', 'Customer Name', 'Vendor Number', 'Vendor Name', 'Class']
+                   'Account Number', 'Account Name', 'Customer Number', 'Customer Name', 'Vendor Number', 'Vendor Name', 'Class']
 for field in expected_fields:
     if field.lower() not in canonical_values:
         canonical_values[field.lower()] = set()
 
 # Updated column variations with new aliases
 column_variations = {'Subsidiary': ['Subsidiary', 'Sub', 'Subsidiaries', 'Subsidiary_Name'],
-    'Classification': ['Classification', 'Brand', 'Cost Center', 'Cost_Center', 'Class'],
-    'Department': ['Department', 'Dept', 'Departments'],
-    'Location': ['Location', 'Loc', 'Locations', 'location', 'loc'],
-    'Budget category': ['Budget category', 'Budget_Category', 'Category', 'budget_category', 'bud', 'budget catgory'],
-    'Currency': ['Currency', 'Currencies'],
-    'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number', 'a/c', 'account_name'],
-    'Account Name': ['Account Name', 'Account_Name', 'Acct_Name', 'a/c', 'account_name'],
-    'Customer Number': ['Customer Number', 'Customer_No', 'Cust_Number', 'Customer_Number'],
-    'Customer Name': ['Customer Name', 'Customer_Name', 'Cust_Name'],
-    'Vendor Number': ['Vendor Number', 'Vendor_No', 'Vend_Number', 'Vendor', 'Vendors'],
-    'Vendor Name': ['Vendor Name', 'Vendor_Name', 'Vend_Name', 'Vendor', 'Vendors'],
-    'Class': ['Class', 'Classes', 'Clas']}
+                     'Classification': ['Classification', 'Brand', 'Cost Center', 'Cost_Center', 'Class'],
+                     'Department': ['Department', 'Dept', 'Departments'],
+                     'Location': ['Location', 'Loc', 'Locations', 'location', 'loc'],
+                     'Budget category': ['Budget category', 'Budget_Category', 'Category', 'budget_category', 'bud', 'budget catgory'],
+                     'Currency': ['Currency', 'Currencies'],
+                     'Account Number': ['Account Number', 'Account_No', 'Acct_Number', 'Account_Number', 'a/c', 'account_name'],
+                     'Account Name': ['Account Name', 'Account_Name', 'Acct_Name', 'a/c', 'account_name'],
+                     'Customer Number': ['Customer Number', 'Customer_No', 'Cust_Number', 'Customer_Number'],
+                     'Customer Name': ['Customer Name', 'Customer_Name', 'Cust_Name'],
+                     'Vendor Number': ['Vendor Number', 'Vendor_No', 'Vend_Number', 'Vendor', 'Vendors'],
+                     'Vendor Name': ['Vendor Name', 'Vendor_Name', 'Vend_Name', 'Vendor', 'Vendors'],
+                     'Class': ['Class', 'Classes', 'Clas']}
 
 # Match column names (without rapidfuzz)
 column_mapping = {}
@@ -92,11 +92,11 @@ for col in canonical_values:
 
 # Field placeholder formatting rules
 field_format_map = {"Subsidiary": "Subsidiary", "Budget category": '"Budget category"',
-    "Account Number": '{"Account Number"}', "Account Name": '{"Account Name"}', "From Period": '"From Period"',
-    "To Period": '"To Period"', "Classification": '{"Classification"}', "Department": '{"Department"}',
-    "Location": '{"Location"}', "Customer Number": '{"Customer Number"}', "Customer Name": '{"Customer Name"}',
-    "Vendor Name": '{"Vendor Name"}', "Vendor Number": '{"Vendor Number"}', "Class": '{"Class"}',
-    "high/low": '"high/low"', "Limit of record": '"Limit of record"', "TABLE_NAME": '"TABLE_NAME"'}
+                    "Account Number": '{"Account Number"}', "Account Name": '{"Account Name"}', "From Period": '"From Period"',
+                    "To Period": '"To Period"', "Classification": '{"Classification"}', "Department": '{"Department"}',
+                    "Location": '{"Location"}', "Customer Number": '{"Customer Number"}', "Customer Name": '{"Customer Name"}',
+                    "Vendor Name": '{"Vendor Name"}', "Vendor Number": '{"Vendor Number"}', "Class": '{"Class"}',
+                    "high/low": '"high/low"', "Limit of record": '"Limit of record"', "TABLE_NAME": '"TABLE_NAME"'}
 
 placeholder_keys = list(field_format_map.keys())
 
@@ -476,14 +476,14 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         # Define period mapping
         current_date = datetime(2025, 5, 12)  # Fixed date for consistency
         period_mapping = {"current month": current_date.strftime("%b %Y"),  # May 2025
-            "last month": (current_date - relativedelta(months=1)).strftime("%b %Y")  # April 2025
-        }
+                          "last month": (current_date - relativedelta(months=1)).strftime("%b %Y")  # April 2025
+                          }
 
         # Define strict placeholder values to preserve
         placeholder_values = ['subsidiary', 'classification', 'class', 'department', 'location', 'currency',
-            'account number', 'account name', 'account', 'customer'
-                                                         'customer number', 'customer name', 'vendor number',
-            'vendor name', 'vendor', 'from period', 'to period', 'high/low', 'limit of record', 'table_name']
+                              'account number', 'account name', 'account', 'customer'
+                                                                           'customer number', 'customer name', 'vendor number',
+                              'vendor name', 'vendor', 'from period', 'to period', 'high/low', 'limit of record', 'table_name']
 
         # Handle other fields
         for key, value in intent_dict.items():
@@ -699,7 +699,7 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
         final_validated = correct_validated_intent_with_fuzzy(smart_validated, canonical_values)
 
         return {"validated_intent": final_validated, "match_notes": notes, "warnings": warnings,
-            "original_intent": intent_dict}
+                "original_intent": intent_dict}
     except Exception as e:
         print(f"Error in validate_intent_fields_v2: {e}")
         return {"validated_intent": {}, "original_intent": intent_dict, "match_notes": {}, "warnings": []}
@@ -712,8 +712,8 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
     corrected_intent = {}
 
     placeholder_values = ['subsidiary', 'classification', 'class', 'department', 'location', 'currency',
-        'account number', 'account name', 'customer number', 'customer name', 'vendor number', 'vendor name',
-        'from period', 'to period', 'high/low', 'limit of record', 'table_name']
+                          'account number', 'account name', 'customer number', 'customer name', 'vendor number', 'vendor name',
+                          'from period', 'to period', 'high/low', 'limit of record', 'table_name']
 
     key_fields = ["Location", "Account Name", "Account Number", "Budget category", "Customer Name", "Customer Number"]
 
@@ -738,7 +738,7 @@ def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values
             continue
 
         if raw in placeholder_values or raw in [field.lower(), field.lower().replace(" ", "_"), field.lower() + "_name",
-            field.lower() + "_number"]:
+                                                field.lower() + "_number"]:
             corrected_intent[field] = value
             continue
 

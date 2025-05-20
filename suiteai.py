@@ -5,6 +5,7 @@ import re
 from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
 from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
+# from formula_file.validator_main import validator
 from rapidfuzz import process, fuzz
 from datetime import datetime, timedelta
 
@@ -627,6 +628,7 @@ if query and st.session_state.has_valid_api_key:
         else:
             print(parsed["intent"])
             validated = validate_intent_fields_v2(parsed["intent"])
+            # validated = validator.validate_intent_fields_v2(parsed["intent"])
             # Replace [account_name], account_name, or [*] with "*" in validated intent for Account Name
             if 'Account Name' in validated['validated_intent'] and (
                 validated['validated_intent']['Account Name'].lower() in ['[account_name]', 'account_name', '[*]']

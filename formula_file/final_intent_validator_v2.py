@@ -9,7 +9,7 @@ from dateutil.relativedelta import relativedelta
 from formula_file.constants import unified_columns
 # Import custom modules (assuming they don't rely on removed dependencies)
 from formula_file.period_utils import get_period_range, validate_period_order
-from formula_file.smart_intent_correction import smart_intent_correction_restricted
+# from formula_file.smart_intent_correction import smart_intent_correction_restricted
 
 # Load NetSuite data
 try:
@@ -90,7 +90,13 @@ if vendor_col in netsuite_df.columns:
 for col in canonical_values:
     canonical_values[col] = sorted(list(canonical_values[col]))
 
-# Field placeholder formatting rules
+
+def search_values(pattern, values):
+    """Search the array using regex and return matching items"""
+    regex = re.compile(pattern, re.IGNORECASE)
+    return [item for item in values if regex.search(item)]
+
+# Field placeholder formxatting rules
 field_format_map = {"Subsidiary": "Subsidiary", "Budget category": '"Budget category"',
                     "Account Number": '{"Account Number"}', "Account Name": '{"Account Name"}', "From Period": '"From Period"',
                     "To Period": '"To Period"', "Classification": '{"Classification"}', "Department": '{"Department"}',
@@ -137,114 +143,6 @@ extended_formula_mapping = {
     "SUITEVAR_ACCOUNT_NAME": ["Subsidiary", "Budget category", "Account Name", "From Period", "To Period",
                               "Classification", "Department", "Location"]}
 
-
-def get_formula_template(formula_type, intent_dict):
-    """
-    Determine the correct formula template based on formula type and intent fields
-    """
-    try:
-        if formula_type == "SUITEREC":
-            return formula_mapping["SUITEREC"]
-
-        def has_valid_match(field, value):
-            if not value or not isinstance(value, str):
-                return False
-            clean_val = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
-            if clean_val in ['none', '', 'null', 'placeholder']:
-                return False
-            possible_values = canonical_values.get('account name', [])
-            if not possible_values:
-                return False
-            match = best_partial_match(clean_val, possible_values, 'Account Name')
-            return match is not None
-
-        if formula_type == "SUITECUS":
-            customer_number = intent_dict.get("Customer Number", "")
-            customer_name = intent_dict.get("Customer Name", "")
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-
-            has_customer_number = has_valid_match("Customer Number", customer_number)
-            has_customer_name = has_valid_match("Customer Name", customer_name)
-            has_account_name = has_valid_match("Account Name", account_name)
-
-            if has_customer_number and has_account_name:
-                return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
-            elif has_customer_name and has_account_name:
-                return extended_formula_mapping["SUITECUS_CUSTOMER_NAME_ACCOUNT_NAME"]
-            return extended_formula_mapping["SUITECUS_CUSTOMER_NUMBER_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEGEN" or formula_type == "SUITEGENREP":
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-            has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping[f"{formula_type}_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEVEN":
-            vendor_number = intent_dict.get("Vendor Number", "")
-            vendor_name = intent_dict.get("Vendor Name", "")
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-
-            has_vendor_number = has_valid_match("Vendor Number", vendor_name)
-            has_vendor_name = has_valid_match("Vendor Name", vendor_name)
-            has_account_name = has_valid_match("Account Name", account_name)
-
-            if has_vendor_name and has_account_name:
-                return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
-            elif has_vendor_number and has_account_name:
-                return extended_formula_mapping["SUITEVEN_VENDOR_NUMBER_ACCOUNT_NAME"]
-            return extended_formula_mapping["SUITEVEN_VENDOR_NAME_ACCOUNT_NAME"]
-
-        elif formula_type == "SUITEBUD" or formula_type == "SUITEBUDREP" or formula_type == "SUITEVAR":
-            account_name = intent_dict.get("Account Name", intent_dict.get("Account Number", ""))
-            has_account_name = has_valid_match("Account Name", account_name)
-            return extended_formula_mapping[f"{formula_type}_ACCOUNT_NAME"]
-
-        return formula_mapping.get(formula_type, [])
-    except Exception as e:
-        print(f"Error in get_formula_template: {e}")
-        return []
-
-
-def format_formula_with_intent(formula_type, intent_dict):
-    """
-    Format a formula string based on formula type and intent dictionary
-    """
-    try:
-        template = get_formula_template(formula_type, intent_dict)
-
-        if formula_type == "SUITEREC":
-            table_name = intent_dict.get("TABLE_NAME", "")
-            return f'SUITEREC("{table_name}")'
-
-        # Get current month and year
-        # Format current month in 3-letter abbreviation (e.g. "Apr 2025")
-        current_month_year = datetime.now().strftime("%b %Y")
-
-        params = []
-        for field in template:
-            value = intent_dict.get(field, "").strip()
-
-            # Handle Account Name/Number missing case
-            if field in ["Account Name", "Account Number"]:
-                if not value or value.lower() in ['', 'none', 'null', 'placeholder']:
-                    params.append('"*"')
-                    continue
-
-            # Default to current month and year if From Period or To Period is missing
-            if field in ["From Period", "To Period"] and not value:
-                value = current_month_year
-
-            if field in ["Subsidiary", "Budget category", "From Period", "To Period", "high/low", "Limit of record"]:
-                params.append(f'"{value}"')
-            elif field in ["Customer Number", "Customer Name", "Account Name", "Classification", "Department",
-                           "Location", "Vendor Name", "Vendor Number", "Class"]:
-                params.append(f'"{value}"')
-            else:
-                params.append(f'"{value}"')
-
-        return f'{formula_type}({", ".join(params)})'
-    except Exception as e:
-        print(f"Error in format_formula_with_intent: {e}")
-        return ""
 
 
 def validate_gpt_formula_output(gpt_formula: str) -> dict:
@@ -487,7 +385,6 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
 
         # Handle other fields
         for key, value in intent_dict.items():
-
             is_placeholder = any(re.search(pattern, str(value)) for pattern in placeholder_patterns)
             clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
 
@@ -539,38 +436,70 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                 continue
 
             if key == "Account Name" or key == "Account Number":
-                # Normalize and get the column to compare against
-                account_values = netsuite_df.get("Account", pd.Series(dtype='object')).dropna().str.lower().to_list()
+                account_series = netsuite_df.get("Account", pd.Series(dtype='object'))
+                acctnumber_series = netsuite_df.get("AcctNumber", pd.Series(dtype='object'))
+
+                account_values = []
+                if account_series is not None:
+                    account_values.extend(account_series.dropna().str.lower().to_list())
+                if acctnumber_series is not None:
+                    account_values.extend(acctnumber_series.dropna().str.lower().to_list())
+
+                # Clean and normalize the incoming value
+                clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
+                if "*" in clean_val:
+
+                    validated[key] = f'"*"' if clean_val.endswith("_name") else f'"{clean_val}"'
+                    notes[key] = f"Wildcard match found: {clean_val}"
+                    continue
+
+                # Search for the value in the column values
+                account_value = search_values(clean_val, account_values)
+                account_value_length = len(account_value)
+
+                # Check if the cleaned value exists in the dataset
+                if account_value_length > 0:
+                    validated[key] = account_value[0]
+                    notes[key] = f"Exact match found in account values: {account_value[0]}"
+                else:
+                    validated[key] = '"*"'
+                    notes[key] = "No match found, using wildcard"
+
+                continue
+
+
+            if key in unified_columns:
+                # Get the target column from the unified mapping
+                target_column = unified_columns[key]
+
+                # Get the column series from netsuite_df, default to empty Series if None
+                column_series = netsuite_df.get(target_column, pd.Series(dtype='object'))
+                column_values = [] if column_series is None or len(column_series) == 0 else column_series.tolist()
+                column_values = [x for x in column_values if pd.notna(x)]
 
                 # Clean and normalize the incoming value
                 clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
 
+                # Search for the value in the column values
+                find_value = search_values(clean_val, column_values)
+                find_value_length = len(find_value)
+
                 # Check if the cleaned value exists in the dataset
-                if clean_val in account_values:
-                    actual_value = netsuite_df[netsuite_df["Account"].str.lower() == clean_val].iloc[0]["Account"]
+                if find_value_length > 0:
+                    actual_value = find_value[0]
                     validated[key] = f'"{actual_value}"'
-                    notes[key] = f"Exact match found in account values: {actual_value}"
+                    notes[key] = f"Exact match found in {target_column} values: {actual_value}"
                 else:
-                    # Attempt partial matching
-                    partial_match = best_partial_match(clean_val, account_values, "Account Name")
-                    if partial_match:
-                        original_case_value = netsuite_df[netsuite_df["Account"].str.lower() == partial_match.lower()].iloc[0]["Account"]
-                        validated[key] = f'"{original_case_value}"'
-                        notes[key] = f"Partial match found in account values: {original_case_value}"
+                    if key == "Subsidiary":
+                        validated[key] = '"Friday Media Group (Consolidated)"'
+                    elif key == "Budget category":
+                        validated[key] = '"Standard Budget"'
                     else:
-                        validated[key] = '"*"'
-                        notes[key] = "No match found, using wildcard"
+                        validated[key] = '""'
+                    notes[key] = f"No match found in {target_column}, using wildcard"
 
                 continue
 
-
-
-            if key == "Budget category" and (
-                    is_placeholder or clean_val in ['budget category', 'budget_category', 'category', 'bud',
-                                                    'budget catgory']):
-                validated[key] = '"Standard Budget"'
-                notes[key] = "Default to Standard Budget"
-                continue
 
             if is_placeholder and (
                     clean_val in placeholder_values or clean_val in [key.lower(), key.lower().replace(" ", "_"),
@@ -584,8 +513,6 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                 notes[key] = "Placeholder preserved"
                 continue
 
-            canonical_col = unified_columns.get(key, key).lower()
-            possible_values = canonical_values.get(canonical_col, [])
 
             if key.lower() == "high/low":
                 if original_query.lower().find("lowest") != -1:
@@ -619,242 +546,10 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
                 notes[key] = "Default to Standard Budget" if key == "Budget category" else "Empty or already invalid"
                 continue
 
-            # Try exact match first
-            if clean_val in possible_values:
-                mapped_col = column_mapping.get(canonical_col, canonical_col)
-                if mapped_col in netsuite_df.columns:
-                    # Find all values that contain the clean_val (like SQL's '%word%')
-                    matches = [v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                               clean_val in v.strip().lower()]
+            
 
-                    if matches:
-                        # If multiple matches, use fuzzy matching to find the best one
-                        if len(matches) > 1:
-                            from rapidfuzz import process, fuzz
-                            best_match, _, _ = process.extractOne(clean_val, matches, scorer=fuzz.WRatio)
-                            matched = best_match
-                        else:
-                            matched = matches[0]
-                    else:
-                        # If no wildcard matches, fall back to exact match
-                        matched = next(
-                            (v for v in netsuite_df[mapped_col].dropna().astype(str) if v.strip().lower() == clean_val),
-                            clean_val)
-
-                    validated[key] = f'"{matched}"'
-                    notes[key] = "Exact match"
-                else:
-                    validated[key] = f'"{clean_val}"'
-                    notes[key] = "Exact match (no column mapping)"
-            else:
-                # Try fuzzy matching
-                partial = best_partial_match(clean_val, possible_values, key)
-                if partial:
-                    mapped_col = column_mapping.get(canonical_col, canonical_col)
-                    if mapped_col in netsuite_df.columns:
-                        # Find all values that contain the partial match (like SQL's '%word%')
-                        matches = [v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                                   partial.lower() in v.strip().lower()]
-
-                        if matches:
-                            # If multiple matches, use fuzzy matching to find the best one
-                            if len(matches) > 1:
-                                from rapidfuzz import process, fuzz
-                                best_match, _, _ = process.extractOne(partial, matches, scorer=fuzz.WRatio)
-                                matched = best_match
-                            else:
-                                matched = matches[0]
-                        else:
-                            # If no wildcard matches, fall back to exact match
-                            matched = next((v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                                            v.strip().lower() == partial), partial)
-
-                        validated[key] = f'"{matched}"'
-                        notes[key] = "Partial match"
-                    else:
-                        validated[key] = f'"{partial}"'
-                        notes[key] = "Partial match (no column mapping)"
-                else:
-                    if key == "Budget category":
-                        validated[key] = '"Standard Budget"'
-                        notes[key] = "Default to Standard Budget"
-                    else:
-                        validated[key] = value if is_placeholder else clean_val
-                        notes[key] = "Placeholder with unmatched value preserved" if is_placeholder else "Not matched"
-                        if not is_placeholder:
-                            warnings.append(f"'{clean_val}' in {key} not recognized.")
-
-        smart_input = validated.copy()
-        for lk in ["Limit of record", "high/low"]:
-            if lk in smart_input:
-                smart_input[lk] = "LOCKED_VALUE"
-
-        smart = smart_intent_correction_restricted(smart_input)
-        smart_validated = smart["validated_intent"]
-
-        for lk in ["Limit of record", "high/low"]:
-            if lk in validated:
-                smart_validated[lk] = validated.get(lk, "")
-
-        final_validated = correct_validated_intent_with_fuzzy(smart_validated, canonical_values)
-
-        return {"validated_intent": final_validated, "match_notes": notes, "warnings": warnings,
+        return {"validated_intent": validated, "match_notes": notes, "warnings": warnings,
                 "original_intent": intent_dict}
     except Exception as e:
         print(f"Error in validate_intent_fields_v2: {e}")
         return {"validated_intent": {}, "original_intent": intent_dict, "match_notes": {}, "warnings": []}
-
-
-def correct_validated_intent_with_fuzzy(validated_intent: dict, canonical_values: dict) -> dict:
-    """
-    Apply fuzzy matching to correct values in validated intent against canonical values.
-    """
-    corrected_intent = {}
-
-    placeholder_values = ['subsidiary', 'classification', 'class', 'department', 'location', 'currency',
-                          'account number', 'account name', 'customer number', 'customer name', 'vendor number', 'vendor name',
-                          'from period', 'to period', 'high/low', 'limit of record', 'table_name']
-
-    key_fields = ["Location", "Account Name", "Account Number", "Budget category", "Customer Name", "Customer Number"]
-
-    for field, value in validated_intent.items():
-        if field in ["From Period", "To Period"]:
-            corrected_intent[field] = value
-            continue
-
-        if not value:
-            if field == "Budget category":
-                corrected_intent[field] = '"Standard Budget"'
-                continue
-            corrected_intent[field] = value
-            continue
-
-        raw = re.sub(r'^[{\["]*|[}\]"]*$', '', str(value)).lower()
-
-        if field == "Budget category" and (
-                raw in ['budget category', 'budget_category', 'category', 'bud', 'budget catgory'] or raw in [
-            field.lower(), field.lower().replace(" ", "_")]):
-            corrected_intent[field] = '"Standard Budget"'
-            continue
-
-        if raw in placeholder_values or raw in [field.lower(), field.lower().replace(" ", "_"), field.lower() + "_name",
-                                                field.lower() + "_number"]:
-            corrected_intent[field] = value
-            continue
-
-        if field == "Account Name" and value == '"*"':
-            corrected_intent[field] = value
-            continue
-
-        canonical_col = unified_columns.get(field, field).lower()
-        possible_values = canonical_values.get(canonical_col, [])
-
-        # For Account Name or Account Number, merge the search space
-        if field in ["Account Name", "Account Number"]:
-            # Get values from both account name and account number columns
-            account_name_vals = canonical_values.get('account name', [])
-            account_number_vals = canonical_values.get('account number', [])
-
-            # Merge the values (use a set to avoid duplicates)
-            merged_vals = list(set(account_name_vals + account_number_vals))
-
-            # If we have merged values, use them instead
-            if merged_vals:
-                possible_values = merged_vals
-
-        if not possible_values:
-            if field == "Budget category":
-                corrected_intent[field] = '"Standard Budget"'
-            else:
-                corrected_intent[field] = value
-            continue
-
-        if raw in possible_values:
-            mapped_col = column_mapping.get(canonical_col, canonical_col)
-            if mapped_col in netsuite_df.columns:
-                # Find all values that contain the raw value (like SQL's '%word%')
-                matches = [v for v in netsuite_df[mapped_col].dropna().astype(str) if raw in v.strip().lower()]
-
-                if matches:
-                    # If multiple matches, use fuzzy matching to find the best one
-                    if len(matches) > 1:
-                        from rapidfuzz import process, fuzz
-                        best_match, _, _ = process.extractOne(raw, matches, scorer=fuzz.WRatio)
-                        original_case = best_match
-                    else:
-                        original_case = matches[0]
-                else:
-                    # If no wildcard matches, fall back to exact match
-                    original_case = next(
-                        (v for v in netsuite_df[mapped_col].dropna().astype(str) if v.strip().lower() == raw), raw)
-            else:
-                original_case = raw
-        else:
-            match = best_partial_match(raw, possible_values, field)
-            if match:
-                mapped_col = column_mapping.get(canonical_col, canonical_col)
-                if mapped_col in netsuite_df.columns:
-                    # Find all values that contain the match value (like SQL's '%word%')
-                    matches = [v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                               match.lower() in v.strip().lower()]
-
-                    if matches:
-                        # If multiple matches, use fuzzy matching to find the best one
-                        if len(matches) > 1:
-                            from rapidfuzz import process, fuzz
-                            best_match, _, _ = process.extractOne(match, matches, scorer=fuzz.WRatio)
-                            original_case = best_match
-                        else:
-                            original_case = matches[0]
-                    else:
-                        # If no wildcard matches, fall back to exact match
-                        original_case = next(
-                            (v for v in netsuite_df[mapped_col].dropna().astype(str) if v.strip().lower() == match),
-                            match)
-                else:
-                    original_case = match
-            else:
-                if field == "Budget category":
-                    corrected_intent[field] = '"Standard Budget"'
-                    continue
-                if field in key_fields:
-                    retry_match = best_partial_match(raw, possible_values, field)
-                    if retry_match:
-                        mapped_col = column_mapping.get(canonical_col, canonical_col)
-                        if mapped_col in netsuite_df.columns:
-                            # Find all values that contain the retry_match value (like SQL's '%word%')
-                            matches = [v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                                       retry_match.lower() in v.strip().lower()]
-
-                            if matches:
-                                # If multiple matches, use fuzzy matching to find the best one
-                                if len(matches) > 1:
-                                    from rapidfuzz import process, fuzz
-                                    best_match, _, _ = process.extractOne(retry_match, matches, scorer=fuzz.WRatio)
-                                    original_case = best_match
-                                else:
-                                    original_case = matches[0]
-                            else:
-                                # If no wildcard matches, fall back to exact match
-                                original_case = next((v for v in netsuite_df[mapped_col].dropna().astype(str) if
-                                                      v.strip().lower() == retry_match), retry_match)
-                        else:
-                            original_case = retry_match
-                    else:
-                        corrected_intent[field] = value
-                        continue
-                else:
-                    corrected_intent[field] = value
-                    continue
-
-        if field in ["Customer Number", "Customer Name", "Account Name", "Classification", "Department", "Location",
-                     "Vendor Name", "Vendor Number", "Class"]:
-            formatted = f'{{"{original_case}"}}'
-        elif field in ["Subsidiary", "Budget category", "high/low", "Limit of record", "TABLE_NAME"]:
-            formatted = f'"{original_case}"'
-        else:
-            formatted = f'"{original_case}"'
-
-        corrected_intent[field] = formatted
-
-    return corrected_intent
