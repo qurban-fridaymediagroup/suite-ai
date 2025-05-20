@@ -441,14 +441,14 @@ def validate_intent_fields_v2(intent_dict, original_query=""):
 
                 account_values = []
                 if account_series is not None:
-                    account_values.extend(account_series.dropna().str.lower().to_list())
+                    account_values.extend(account_series.to_list())
                 if acctnumber_series is not None:
-                    account_values.extend(acctnumber_series.dropna().str.lower().to_list())
-
+                    account_values.extend(acctnumber_series.to_list())
+                
+                account_values = [x for x in account_values if pd.notna(x)]
                 # Clean and normalize the incoming value
                 clean_val = re.sub(r'[{}"\'\[\]]', '', str(value)).strip().lower()
                 if "*" in clean_val:
-
                     validated[key] = f'"*"' if clean_val.endswith("_name") else f'"{clean_val}"'
                     notes[key] = f"Wildcard match found: {clean_val}"
                     continue
