@@ -92,9 +92,31 @@ for col in canonical_values:
 
 
 def search_values(pattern, values):
-    """Search the array using regex and return matching items"""
-    regex = re.compile(pattern, re.IGNORECASE)
-    return [item for item in values if regex.search(item)]
+    
+    matching = [value for value in values if pattern in value.lower()]
+    
+    if(len(matching) > 0):
+        exact_matches_ci = [value for value in values if value.lower() == pattern.lower()]
+        print(exact_matches_ci)  # ['Rent'] (matches when ignoring case)
+
+        exact_pattern = r'\b' + re.escape(pattern) + r'\b'
+        exact_matching = [value for value in matching if re.search(exact_pattern, value.lower())]
+
+        start_pattern = r'\b' + re.escape(pattern)
+        start_matching = [value for value in matching if re.search(start_pattern, value.lower())]
+
+        print("\n exact_matching", exact_matching)
+        if(len(exact_matches_ci) > 0):
+            return exact_matches_ci
+        elif(len(exact_matching) > 0):
+            return exact_matching
+        elif(len(start_matching) > 0):
+            return start_matching
+        return matching
+    else:
+        """Search the array using regex and return matching items"""
+        regex = re.compile(pattern, re.IGNORECASE)
+        return [item for item in values if regex.search(item)]
 
 # Field placeholder formxatting rules
 field_format_map = {"Subsidiary": "Subsidiary", "Budget category": '"Budget category"',

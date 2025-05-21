@@ -626,7 +626,6 @@ if query and st.session_state.has_valid_api_key:
                 st.markdown("**GPT Response:**")
                 st.code(formula, language="text")
         else:
-            print(parsed["intent"])
             validated = validate_intent_fields_v2(parsed["intent"])
             # validated = validator.validate_intent_fields_v2(parsed["intent"])
             # Replace [account_name], account_name, or [*] with "*" in validated intent for Account Name
