@@ -4,10 +4,9 @@ import os
 import re
 from dotenv import load_dotenv
 from formula_file.dictionary import normalisation_dict, formula_mapping
-from formula_file.final_intent_validator_v2 import validate_intent_fields_v2
+from formula_file.final_intent_validator_v2 import validate_intent_fields_v2, generate_formula_from_intent
 # from formula_file.validator_main import validator
 from rapidfuzz import process, fuzz
-from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -47,9 +46,10 @@ def normalize_prompt(text):
         'vend': 'vendor',
         'vendor': 'vendor'
     }
-
+    
     # Split text into words, preserving spaces and special characters
     words = re.findall(r'\b\w+\b|[^\w\s]', text)
+    
     result = []
     dictionary_keys = list(normalisation_dict.keys())
 
@@ -151,8 +151,10 @@ def normalize_prompt(text):
 
     # Join words with single spaces and remove extra spaces
     normalized_text = ' '.join(result)
+    
     # Remove spaces around underscores and hyphens
-    normalized_text = re.sub(r'\s*([-_])\s*', r'\1', normalized_text)
+    # Only remove spaces around underscores, not hyphens (to preserve "abc limited - test")
+    normalized_text = re.sub(r'\s*_+\s*', '_', normalized_text)
     # Remove multiple spaces
     normalized_text = re.sub(r'\s+', ' ', normalized_text).strip()
 
@@ -166,7 +168,7 @@ def parse_formula_to_intent(formula_str: str):
 
     formula_type = match.group(1).upper()  # ✅ Convert formula name to UPPERCASE here
     raw_params = match.group(2)
-    params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}]*\})', raw_params)]
+    params = [p.strip().strip('"').strip("'") for p in re.split(r',(?![^{}\[\]]*[\}\]])', raw_params)]
 
     if formula_type not in formula_mapping or len(params) != len(formula_mapping[formula_type]):
         return {"error": "Mismatch in formula parameters.", "formula": formula_str}
@@ -188,203 +190,6 @@ def format_all_formula_mappings(mapping: dict) -> str:
         [f"{name}({', '.join(params)})" for name, params in mapping.items()]
     )
 
-def generate_formula_from_intent(formula_type: str, intent: dict, formula_mapping: dict, has_account_name_placeholder: bool = False) -> str:
-    """
-    Generate NetSuite formula using the validated intent, maintaining the order and formula type.
-    Outputs '*' for placeholders or missing values in Account Name, Account Number, Vendor Name, account_name,
-    Vendor Number, Customer Name, Customer Number; outputs '*' for [account_name] in validation and final response.
-    Hard-codes 'Accounts Receivable' for Account Name in the final formula.
-    Uses 'Friday Media Group (Consolidated)' for Subsidiary if placeholder or missing.
-    Uses 'Current month' for From Period and To Period if not mentioned.
-    Use "*" for account_name in validation and final response if it present in GPT response.
-    For SUITEREC, uses TABLE_NAME directly from validated intent with proper quoting.
-    """
-    if formula_type not in formula_mapping:
-        raise ValueError(f"Unknown formula type: {formula_type}")
-
-    ordered_fields = formula_mapping[formula_type]
-
-    # Build the formula string
-    formula_str = formula_type + "("
-
-    # Handle SUITEREC specifically
-    if formula_type == "SUITEREC":
-        table_name = intent.get("TABLE_NAME", "").strip()
-        # Remove any curly braces or quotes that might come from validated intent
-        clean_table_name = re.sub(r'[{}"\'\[\]]', '', table_name).strip()
-        if clean_table_name:
-            formula_str += f'"{clean_table_name}"'
-        else:
-            formula_str += '""'  # Default to empty string if no valid table name
-        formula_str += ")"
-        return formula_str
-
-    for i, field in enumerate(ordered_fields):
-        value = intent.get(field, "").strip()
-
-        # Define all fields to check for placeholders
-        all_fields = [
-            "Subsidiary", "Account", "Account", "Classification", "account",
-            "Department", "Location", "Customer", "Vendor", "Class",
-            "high/low", "Limit of Records",
-            "Budget Category", "From Period", "To Period", "TABLE_NAME"
-        ]
-
-        # Placeholder formats from field_format_map
-        placeholder_formats = {
-            "Subsidiary": "Subsidiary",
-            "Budget category": '"Budget category"',
-            "Account Number": '{"Account"}',
-            "Account Name": '{"Account"}',
-            "From Period": '"From Period"',
-            "To Period": '"To Period"',
-            "Classification": '{"Classification"}',
-            "Department": '{"Department"}',
-            "Location": '{"Location"}',
-            "Customer Number": '{"Customer"}',
-            "Customer Name": '{"Customer"}',
-            "Vendor Name": '{"Vendor"}',
-            "Vendor Number": '{"Vendor"}',
-            "Class": '{"Class"}',
-            "high/low": '"high/low"',
-            "Limit of Records": '"Limit of record"',
-            "TABLE_NAME": '"TABLE_NAME"'
-        }
-
-        # Fields that should output '*' when placeholder or missing
-        asterisk_fields = [
-            "Account Name", "Account Number", "Vendor Name", "Vendor Number", "account_name",
-            "Customer Name", "Customer Number"
-        ]
-
-        # Normalize field variations for placeholder detection
-        field_variations = [
-            field.lower(),
-            field.replace(' ', '_').lower(),
-            field.replace('/', '_').lower(),
-            field.lower().replace('limit of records', 'limit of record'),
-            field.lower().replace('high/low', 'high_low'),
-            field.lower().replace('grouping and filtering', 'grouping_and_filtering')
-        ]
-
-        # Additional values to treat as placeholders
-        invalid_values = [
-            'vendor_name', 'high_low', 'limit of record', 'limit_of_record',
-            'account_number', 'account_name', 'customer_number',
-            'customer_name', 'vendor_number', 'budget_category', 'classification',
-            'department', 'location', 'subsidiary', 'class', 'limit of records',
-            'from period', 'to period', 'from_period', 'to_period', 'vendor name',
-            'customer number', 'customer name', 'vendor number', 'account number',
-            'account name', 'budget category', 'budget', 'table_name', 'grouping and filtering',
-            'grouping_and_filtering', '', 'none', 'null', 'placeholder'
-        ]
-
-        # Check if the value is a placeholder, empty, or invalid
-        clean_value = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
-        is_placeholder = (
-            value == placeholder_formats.get(field, '') or
-            bool(re.match(r'^{' + re.escape(field) + r'}$|^{' + re.escape(field.lower()) + r'}$', value)) or
-            bool(re.match(r'^\[' + re.escape(field) + r'\]$|^\[' + re.escape(field.lower()) + r'\]$', value)) or
-            bool(re.match(r'^{"' + re.escape(field) + r'"}$|^{"' + re.escape(field.lower()) + r'"}$', value)) or
-            not value or
-            clean_value in field_variations or
-            clean_value in [v.lower() for v in all_fields] or
-            clean_value in invalid_values or
-            clean_value == field.lower() or
-            value in [f'"{v}"' for v in invalid_values] or
-            value in [f'"{v}"' for v in field_variations] or
-            clean_value in [v.replace(' ', '_').lower() for v in all_fields]
-        )
-
-        # Handle Subsidiary
-        if field == "Subsidiary" or field == "your_subsidiary":
-            if is_placeholder:
-                formula_str += '"Friday Media Group (Consolidated)"'
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"Friday Media Group (Consolidated)"'
-        # Handle From Period and To Period
-        elif field in ["From Period", "To Period"]:
-            if is_placeholder or (isinstance(value, str) and "current month" in value.lower()):
-                # Get current month and year
-                current_date = datetime.now()
-                current_month_year = current_date.strftime("%b %Y")
-                formula_str += f'"{current_month_year}"'
-            elif isinstance(value, str) and "last month" in value.lower():
-                # Get last month and year
-                current_date = datetime.now()
-                last_month = current_date.replace(day=1) - timedelta(days=1)
-                last_month_year = last_month.strftime("%b %Y")
-                formula_str += f'"{last_month_year}"'
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value.capitalize()}"'  # Ensure proper capitalization
-                else:
-                    # Get current month and year as default
-                    current_month_year = datetime.now().strftime("%b %Y")
-                    formula_str += f'"{current_month_year}"'
-
-
-        # Handle Account Name with hard-coded value
-        elif field == "Account Name":
-            if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
-                formula_str += '"*"'  # Output * for [account_name], [account_number], or account_name
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"Accounts Receivable"'  # Hard-code Accounts Receivable
-        # Handle other fields
-        elif is_placeholder:
-            # Force asterisk for Account Name if [account_name] was in the original formula
-            if field == "Account Name" and has_account_name_placeholder:
-                formula_str += '"*"'  # Output * for validation
-            elif field in asterisk_fields:
-                formula_str += '"*"'
-            else:
-                # For non-asterisk placeholder fields, output empty string to ensure comma
-                formula_str += '""'
-        else:
-            value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-            if value.startswith('[') and value.endswith(']'):
-                value = value[1:-1]
-                values = [v.strip().strip('"').strip("'") for v in value.split(',') if v.strip()]
-                if values:
-                    formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
-                else:
-                    if field in asterisk_fields:
-                        formula_str += '"*"'
-                    else:
-                        formula_str += '""'
-            else:
-                # Handle Budget category
-                if field == "Budget category":
-                    if is_placeholder:
-                        formula_str += '"Standard Budget"'
-                    else:
-                        value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                        if value:
-                            formula_str += f'"{value}"'
-                        else:
-                            formula_str += '"Standard Budget"'
-                elif value:
-                    formula_str += f'"{value}"'
-                elif field in asterisk_fields:
-                    formula_str += '"*"'
-                else:
-                    formula_str += '""'
-
-        # Add comma if not the last parameter
-        if i < len(ordered_fields) - 1:
-            formula_str += ", "
-
-    formula_str += ")"
-    return formula_str
 
 # Initialize session state for model ID, system prompt and GPT key
 if 'fine_tuned_model' not in st.session_state:
