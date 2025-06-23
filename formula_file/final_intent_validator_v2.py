@@ -1,5 +1,6 @@
 import os
 import re
+import ast
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 
@@ -627,16 +628,12 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
 
     for i, field in enumerate(ordered_fields):
         value = intent.get(field, "").strip()
-
-        # Define all fields to check for placeholders
         all_fields = [
-            "Subsidiary", "Account", "Account", "Classification", "account",
+            "Subsidiary", "Account", "Classification", "account",
             "Department", "Location", "Customer", "Vendor", "Class",
-            "high/low", "Limit of Records",
-            "Budget Category", "From Period", "To Period", "TABLE_NAME"
+            "high/low", "Limit of Records", "Budget Category", "From Period",
+            "To Period", "TABLE_NAME"
         ]
-
-        # Placeholder formats from field_format_map
         placeholder_formats = {
             "Subsidiary": "Subsidiary",
             "Budget category": '"Budget category"',
@@ -656,14 +653,10 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             "Limit of Records": '"Limit of record"',
             "TABLE_NAME": '"TABLE_NAME"'
         }
-
-        # Fields that should output '*' when placeholder or missing
         asterisk_fields = [
-            "Account Name", "Account Number", "Vendor Name", "Vendor Number", "account_name",
-            "Customer Name", "Customer Number"
+            "Account Name", "Account Number", "Vendor Name", "Vendor Number",
+            "account_name", "Customer Name", "Customer Number"
         ]
-
-        # Normalize field variations for placeholder detection
         field_variations = [
             field.lower(),
             field.replace(' ', '_').lower(),
@@ -672,8 +665,6 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             field.lower().replace('high/low', 'high_low'),
             field.lower().replace('grouping and filtering', 'grouping_and_filtering')
         ]
-
-        # Additional values to treat as placeholders
         invalid_values = [
             'vendor_name', 'high_low', 'limit of record', 'limit_of_record',
             'account_number', 'account_name', 'customer_number',
@@ -681,11 +672,12 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
             'department', 'location', 'subsidiary', 'class', 'limit of records',
             'from period', 'to period', 'from_period', 'to_period', 'vendor name',
             'customer number', 'customer name', 'vendor number', 'account number',
-            'account name', 'budget category', 'budget', 'table_name', 'grouping and filtering',
-            'grouping_and_filtering', '', 'none', 'null', 'placeholder'
+            'account name', 'budget category', 'budget', 'table_name',
+            'grouping and filtering', 'grouping_and_filtering', '', 'none', 'null',
+            'placeholder'
         ]
 
-        # Check if the value is a placeholder, empty, or invalid
+        # Check if the value is a placeholder
         clean_value = re.sub(r'[{}"\'\[\]]', '', value).strip().lower()
         is_placeholder = (
                 value == placeholder_formats.get(field, '') or
@@ -702,59 +694,68 @@ def generate_formula_from_intent(formula_type: str, intent: dict, formula_mappin
                 clean_value in [v.replace(' ', '_').lower() for v in all_fields]
         )
 
+        # Handle JSON array values
+        try:
+            # Strip outer quotes for parsing
+            json_value = value.strip('"').strip("'")
+
+            parsed_value = ast.literal_eval(json_value)  # Changed from json.loads to ast.literal_eval
+            if isinstance(parsed_value, list):
+                values = [str(v).strip().strip('"').strip("'") for v in parsed_value if str(v).strip()]
+                dump(values)
+                if values:
+                    formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
+                else:
+                    formula_str += '"*"' if field in asterisk_fields else '""'
+                if i < len(ordered_fields) - 1:
+                    formula_str += ", "
+                continue
+        except (ValueError, SyntaxError):  
+            pass
+
+        # Handle string values that look like arrays
+        value = re.sub(r'[{}]', '', value).strip()
+        if value.startswith('[') and value.endswith(']') and not is_placeholder:
+            inner_value = value[1:-1].strip()
+            if inner_value:
+                values = [v.strip().strip('"').strip("'") for v in re.split(r',(?=(?:[^"]*"[^"]*")*[^"]*$)', inner_value) if v.strip()]
+                if values:
+                    formula_str += f'[{", ".join(f'"{v}"' for v in values)}]'
+                else:
+                    formula_str += '"*"' if field in asterisk_fields else '""'
+            else:
+                formula_str += '"*"' if field in asterisk_fields else '""'
         # Handle Subsidiary
-        if field == "Subsidiary" or field == "your_subsidiary":
+        elif field == "Subsidiary" or field == "your_subsidiary":
             if is_placeholder:
                 formula_str += '"Friday Media Group (Consolidated)"'
             else:
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"Friday Media Group (Consolidated)"'
+                formula_str += f'"{value}"' if value else '"Friday Media Group (Consolidated)"'
         # Handle From Period and To Period
         elif field in ["From Period", "To Period"]:
             if is_placeholder or (isinstance(value, str) and "current month" in value.lower()):
-                # Get current month and year
                 current_date = datetime.now()
                 current_month_year = current_date.strftime("%b %Y")
                 formula_str += f'"{current_month_year}"'
             elif isinstance(value, str) and "last month" in value.lower():
-                # Get last month and year
                 current_date = datetime.now()
                 last_month = current_date.replace(day=1) - timedelta(days=1)
                 last_month_year = last_month.strftime("%b %Y")
                 formula_str += f'"{last_month_year}"'
             else:
                 value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value.capitalize()}"'  # Ensure proper capitalization
-                else:
-                    # Get current month and year as default
-                    current_month_year = datetime.now().strftime("%b %Y")
-                    formula_str += f'"{current_month_year}"'
-
-
-        # Handle Account Name with hard-coded value
+                formula_str += f'"{value.capitalize()}"' if value else f'"{datetime.now().strftime("%b %Y")}"'
+        # Handle Account Name
         elif field == "Account Name":
             if has_account_name_placeholder or is_placeholder or clean_value == 'account_name':
-                formula_str += '"*"'  # Output * for [account_name], [account_number], or account_name
-            else:
-                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
-                if value:
-                    formula_str += f'"{value}"'
-                else:
-                    formula_str += '"Accounts Receivable"'  # Hard-code Accounts Receivable
-        # Handle other fields
-        elif is_placeholder:
-            # Force asterisk for Account Name if [account_name] was in the original formula
-            if field == "Account Name" and has_account_name_placeholder:
-                formula_str += '"*"'  # Output * for validation
-            elif field in asterisk_fields:
                 formula_str += '"*"'
             else:
-                # For non-asterisk placeholder fields, output empty string to ensure comma
-                formula_str += '""'
+                value = re.sub(r'[{}"\'\[\]]', '', value).strip()
+                formula_str += f'"{value}"' if value else '"Accounts Receivable"'
+        # Handle other fields
+        elif is_placeholder:
+            formula_str += '"*"' if field in asterisk_fields else '""'
         else:
             value = re.sub(r'[{}"\'\[\]]', '', value).strip()
             if value.startswith('[') and value.endswith(']'):
